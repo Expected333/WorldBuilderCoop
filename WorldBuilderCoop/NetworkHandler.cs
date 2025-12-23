@@ -18,9 +18,6 @@ namespace WorldBuilderCoop
         private int _userId;
         public List<ConnectedClient> _connectedClients = new List<ConnectedClient>();
 
-        private UdpClient _udpClient;
-        private int _udpPort = 7778;
-
         private int _myUserId = -1;
         public bool IsHost => _isHost;
         public bool IsConnected => _isConnected;
@@ -74,6 +71,8 @@ namespace WorldBuilderCoop
             }
         }
 
+        // ======== LISTENER PART ========
+
         public IEnumerator listenHostPacketLoop()
         {
             while (_isConnected && _isHost)
@@ -115,38 +114,6 @@ namespace WorldBuilderCoop
             yield break;
         }
 
-        public IEnumerator listenUdpPacketLoop()
-        {
-            while (_isConnected && _isHost)
-            {
-                try
-                {
-                    if (_udpClient != null && _udpClient.Available > 0)
-                    {
-                        IPEndPoint remoteEP = new IPEndPoint(IPAddress.Any, 0);
-                        try
-                        {
-                            byte[] buffer = _udpClient.Receive(ref remoteEP);
-                            if (buffer != null && buffer.Length > 0)
-                            {
-                                ProcessUdpPacket(buffer, buffer.Length);
-                            }
-                        }
-                        catch (SocketException)
-                        {
-                            // Ignore socket exceptions
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    ConsoleBase.WriteError($"UDP listen error: {ex.Message}");
-                }
-                yield return new WaitForSeconds(0.01f);
-            }
-            yield break;
-        }
-
         public IEnumerator listenPacketLoop()
         {
             yield return new WaitForSeconds(0.5f);
@@ -181,18 +148,6 @@ namespace WorldBuilderCoop
                 yield return new WaitForSeconds(0.01f);
             }
             yield break;
-        }
-
-        private void ProcessUdpPacket(byte[] data, int length)
-        {
-            if (length < 2) return;
-
-            Packets packetType = (Packets)data[0];
-
-            if (packetType == Packets.PlayerSync)
-            {
-                HandlePlayerSync(data, length);
-            }
         }
 
         private void ProcessPacket(byte[] data, int length)
@@ -345,6 +300,8 @@ namespace WorldBuilderCoop
             WorldBuilderSync.userSync(userId, position, rotation);
         }
 
+        // ======== SEND PACKETS PART ========
+
         public void SendPlaceObject(Vector3 position, Quaternion rotation, Vector3 scale, int objectId, string prefabName, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
         {
             byte[] prefabNameBytes = System.Text.Encoding.UTF8.GetBytes(prefabName);
@@ -471,21 +428,6 @@ namespace WorldBuilderCoop
             SendPacket(packet, distribution, userIds);
         }
 
-        private void SendUdpPacket(byte[] packet, PacketDistribution distribution, List<int> userIds = null)
-        {
-            try
-            {
-                if (!_isHost && _udpClient != null)
-                {
-                    _udpClient.Send(packet, packet.Length);
-                }
-            }
-            catch (Exception ex)
-            {
-                ConsoleBase.WriteError($"UDP send error: {ex.Message}");
-            }
-        }
-
         private void SendPacket(byte[] packet, PacketDistribution distribution, List<int> userIds = null)
         {
             try
@@ -545,6 +487,8 @@ namespace WorldBuilderCoop
                 ConsoleBase.WriteError($"Send error: {ex.Message}");
             }
         }
+
+        // ======== EVENT PART ========
 
         private void OnClientConnected(IAsyncResult result)
         {
@@ -628,7 +572,6 @@ namespace WorldBuilderCoop
         {
             _tcpClient?.Close();
             _tcpListener?.Stop();
-            _udpClient?.Close();
             foreach (var client in _connectedClients)
             {
                 client.Stream?.Close();
