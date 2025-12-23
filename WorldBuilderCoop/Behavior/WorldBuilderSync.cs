@@ -8,6 +8,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using WorldBuilderCoop.Network;
 
 namespace WorldBuilderCoop
 {
@@ -170,7 +171,7 @@ namespace WorldBuilderCoop
                         if (Vector3.Distance(currentPos, lastPosition) > syncThreshold ||
                             Quaternion.Angle(currentRot, lastRotation) > rotationThreshold)
                         {
-                            Core.Network.SendPlayerSync(Core.Network.MyUserId, currentPos, currentRot, PacketDistribution.SendToOthers);
+                            PacketSender.SendPlayerSync(Core.Network.MyUserId, currentPos, currentRot, PacketDistribution.SendToOthers);
                             lastPosition = currentPos;
                             lastRotation = currentRot;
                         }

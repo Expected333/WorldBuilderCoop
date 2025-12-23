@@ -6,6 +6,7 @@ using ModLoader;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using WorldBuilderCoop.Network;
 
 namespace WorldBuilderCoop
 {
@@ -63,7 +64,7 @@ namespace WorldBuilderCoop
                     if (objectIds.Count > 0)
                     {
                         ConsoleBase.WriteLine(objectIds.Count);
-                        Core.Network.SendRemoveObject(objectIds, PacketDistribution.SendToOthers);
+                        PacketSender.SendRemoveObject(objectIds, PacketDistribution.SendToOthers);
                     }
                 }
             }
@@ -113,7 +114,7 @@ namespace WorldBuilderCoop
                     // Ne pas appeler SetSelection() ici
                     // MonoBehaviourSingleton<BlEditorManager>.Instance.SetSelection(gameObject.transform);
 
-                    Core.Network.SendPlaceObject(position, Quaternion.identity, Vector3.one, networkObject.NetworkId, fullPath, PacketDistribution.SendToOthers);
+                    PacketSender.SendPlaceObject(position, Quaternion.identity, Vector3.one, networkObject.NetworkId, fullPath, PacketDistribution.SendToOthers);
                 }
 
                 return false;

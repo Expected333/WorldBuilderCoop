@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using UnityEngine;
+using WorldBuilderCoop.Network;
 namespace WorldBuilderCoop
 {
     public class NetworkHandler
@@ -58,9 +59,7 @@ namespace WorldBuilderCoop
             try
             {
                 if (_isConnected)
-                {
                     Shutdown();
-                }
                 _tcpClient = new TcpClient();
                 _tcpClient.BeginConnect(ipAddress, port, OnConnectedToHost, null);
                 ConsoleBase.WriteLine($"Connecting to {ipAddress}:{port}");
@@ -89,14 +88,10 @@ namespace WorldBuilderCoop
                             int bytesRead = client.Stream.Read(buffer, 0, buffer.Length);
 
                             if (bytesRead > 0)
-                            {
                                 ProcessPacket(buffer, bytesRead);
-                            }
                         }
                         else if (!client.Client.Connected)
-                        {
                             disconnectedClients.Add(client);
-                        }
                     }
 
                     foreach (var client in disconnectedClients)
@@ -125,9 +120,7 @@ namespace WorldBuilderCoop
                     if (_tcpClient != null && _tcpClient.Connected)
                     {
                         if (_networkStream == null)
-                        {
                             _networkStream = _tcpClient.GetStream();
-                        }
 
                         if (_networkStream.DataAvailable)
                         {
@@ -160,275 +153,26 @@ namespace WorldBuilderCoop
             switch (packetType)
             {
                 case Packets.PlaceObject:
-                    HandlePlaceObject(data, length);
+                    PacketRecieve.HandlePlaceObject(data, length);
                     break;
                 case Packets.RemoveObject:
-                    HandleRemoveObject(data, length);
+                    PacketRecieve.HandleRemoveObject(data, length);
                     break;
                 case Packets.UpdateObject:
-                    HandleUpdateObject(data, length);
+                    PacketRecieve.HandleUpdateObject(data, length);
                     break;
                 case Packets.LoadMap:
-                    HandleLoadMap(data, length);
+                    PacketRecieve.HandleLoadMap(data, length);
                     break;
                 case Packets.PlayerSync:
-                    HandlePlayerSync(data, length);
+                    PacketRecieve.HandlePlayerSync(data, length);
                     break;
             }
-        }
-
-        private void HandlePlaceObject(byte[] data, int length)
-        {
-            int offset = 2;
-            Vector3 position = new Vector3(
-                BitConverter.ToSingle(data, offset),
-                BitConverter.ToSingle(data, offset + 4),
-                BitConverter.ToSingle(data, offset + 8)
-            );
-            offset += 12;
-
-            Quaternion rotation = new Quaternion(
-                BitConverter.ToSingle(data, offset),
-                BitConverter.ToSingle(data, offset + 4),
-                BitConverter.ToSingle(data, offset + 8),
-                BitConverter.ToSingle(data, offset + 12)
-            );
-            offset += 16;
-
-            Vector3 scale = new Vector3(
-                BitConverter.ToSingle(data, offset),
-                BitConverter.ToSingle(data, offset + 4),
-                BitConverter.ToSingle(data, offset + 8)
-            );
-            offset += 12;
-
-            int objectId = BitConverter.ToInt32(data, offset);
-            offset += 4;
-
-            int prefabNameLength = BitConverter.ToInt32(data, offset);
-            offset += 4;
-
-            string prefabName = System.Text.Encoding.UTF8.GetString(data, offset, prefabNameLength);
-
-            WorldBuilderSync.placeObject(position, rotation, scale, objectId, prefabName);
-        }
-
-        private void HandleRemoveObject(byte[] data, int length)
-        {
-            int offset = 2;
-            int count = BitConverter.ToInt32(data, offset);
-            offset += 4;
-
-            List<int> objectIds = new List<int>();
-            for (int i = 0; i < count; i++)
-            {
-                int objectId = BitConverter.ToInt32(data, offset);
-                objectIds.Add(objectId);
-                offset += 4;
-            }
-            ConsoleBase.WriteLine("packet recieved " + objectIds.Count);
-            WorldBuilderSync.destroyObject(objectIds);
-        }
-
-        private void HandleUpdateObject(byte[] data, int length)
-        {
-            int offset = 2;
-            int objectId = BitConverter.ToInt32(data, offset);
-            offset += 4;
-
-            Vector3 position = new Vector3(
-                BitConverter.ToSingle(data, offset),
-                BitConverter.ToSingle(data, offset + 4),
-                BitConverter.ToSingle(data, offset + 8)
-            );
-            offset += 12;
-
-            Quaternion rotation = new Quaternion(
-                BitConverter.ToSingle(data, offset),
-                BitConverter.ToSingle(data, offset + 4),
-                BitConverter.ToSingle(data, offset + 8),
-                BitConverter.ToSingle(data, offset + 12)
-            );
-            offset += 16;
-
-            Vector3 scale = new Vector3(
-                BitConverter.ToSingle(data, offset),
-                BitConverter.ToSingle(data, offset + 4),
-                BitConverter.ToSingle(data, offset + 8)
-            );
-            offset += 12;
-
-            int componentDataLength = BitConverter.ToInt32(data, offset);
-            offset += 4;
-
-            byte[] componentData = componentDataLength > 0 ? new byte[componentDataLength] : null;
-            if (componentDataLength > 0)
-            {
-                Buffer.BlockCopy(data, offset, componentData, 0, componentDataLength);
-            }
-
-            WorldBuilderSync.updateObject(objectId, position, rotation, scale, componentData);
-        }
-
-        private void HandleLoadMap(byte[] data, int length)
-        {
-            int nameLength = BitConverter.ToInt32(data, 2);
-            string mapName = System.Text.Encoding.UTF8.GetString(data, 6, nameLength);
-            WorldBuilderSync.loadMap(mapName);
-        }
-
-        private void HandlePlayerSync(byte[] data, int length)
-        {
-            int offset = 2;
-            int userId = BitConverter.ToInt32(data, offset);
-            offset += 4;
-
-            Vector3 position = new Vector3(
-                BitConverter.ToSingle(data, offset),
-                BitConverter.ToSingle(data, offset + 4),
-                BitConverter.ToSingle(data, offset + 8)
-            );
-            offset += 12;
-
-            Quaternion rotation = new Quaternion(
-                BitConverter.ToSingle(data, offset),
-                BitConverter.ToSingle(data, offset + 4),
-                BitConverter.ToSingle(data, offset + 8),
-                BitConverter.ToSingle(data, offset + 12)
-            );
-
-            WorldBuilderSync.userSync(userId, position, rotation);
         }
 
         // ======== SEND PACKETS PART ========
 
-        public void SendPlaceObject(Vector3 position, Quaternion rotation, Vector3 scale, int objectId, string prefabName, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
-        {
-            byte[] prefabNameBytes = System.Text.Encoding.UTF8.GetBytes(prefabName);
-            byte[] packet = new byte[2 + 12 + 16 + 12 + 4 + 4 + prefabNameBytes.Length];
-
-            packet[0] = (byte)distribution;
-            packet[1] = (byte)Packets.PlaceObject;
-
-            int offset = 2;
-            Buffer.BlockCopy(BitConverter.GetBytes(position.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.z), 0, packet, offset + 8, 4);
-            offset += 12;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.z), 0, packet, offset + 8, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.w), 0, packet, offset + 12, 4);
-            offset += 16;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(scale.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(scale.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(scale.z), 0, packet, offset + 8, 4);
-            offset += 12;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(objectId), 0, packet, offset, 4);
-            offset += 4;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(prefabNameBytes.Length), 0, packet, offset, 4);
-            offset += 4;
-
-            Buffer.BlockCopy(prefabNameBytes, 0, packet, offset, prefabNameBytes.Length);
-
-            SendPacket(packet, distribution, userIds);
-        }
-
-        public void SendRemoveObject(List<int> objectIds, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
-        {
-            byte[] packet = new byte[2 + 4 + (objectIds.Count * 4)];
-            packet[0] = (byte)distribution;
-            packet[1] = (byte)Packets.RemoveObject;
-
-            int offset = 2;
-            Buffer.BlockCopy(BitConverter.GetBytes(objectIds.Count), 0, packet, offset, 4);
-            offset += 4;
-
-            foreach (var objectId in objectIds)
-            {
-                Buffer.BlockCopy(BitConverter.GetBytes(objectId), 0, packet, offset, 4);
-                offset += 4;
-            }
-            ConsoleBase.WriteLine("Packet send " + objectIds.Count);
-            SendPacket(packet, distribution, userIds);
-        }
-
-        public void SendUpdateObject(int objectId, Vector3 position, Quaternion rotation, Vector3 scale, PacketDistribution distribution = PacketDistribution.SendToAll, byte[] componentData = null, List<int> userIds = null)
-        {
-            int componentDataLength = componentData != null ? componentData.Length : 0;
-            byte[] packet = new byte[2 + 4 + 12 + 16 + 12 + 4 + componentDataLength];
-
-            int offset = 0;
-            packet[offset++] = (byte)distribution;
-            packet[offset++] = (byte)Packets.UpdateObject;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(objectId), 0, packet, offset, 4);
-            offset += 4;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(position.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.z), 0, packet, offset + 8, 4);
-            offset += 12;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.z), 0, packet, offset + 8, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.w), 0, packet, offset + 12, 4);
-            offset += 16;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(scale.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(scale.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(scale.z), 0, packet, offset + 8, 4);
-            offset += 12;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(componentDataLength), 0, packet, offset, 4);
-            offset += 4;
-
-            if (componentDataLength > 0)
-            {
-                Buffer.BlockCopy(componentData, 0, packet, offset, componentDataLength);
-            }
-
-            SendPacket(packet, distribution, userIds);
-        }
-
-        public void SendLoadMap(string mapName, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
-        {
-            byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(mapName);
-            byte[] packet = new byte[2 + 4 + nameBytes.Length];
-            packet[0] = (byte)distribution;
-            packet[1] = (byte)Packets.LoadMap;
-            Buffer.BlockCopy(BitConverter.GetBytes(nameBytes.Length), 0, packet, 2, 4);
-            Buffer.BlockCopy(nameBytes, 0, packet, 6, nameBytes.Length);
-            SendPacket(packet, distribution, userIds);
-        }
-
-        public void SendPlayerSync(int userId, Vector3 position, Quaternion rotation, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
-        {
-            byte[] packet = new byte[2 + 4 + 12 + 16];
-            packet[0] = (byte)distribution;
-            packet[1] = (byte)Packets.PlayerSync;
-
-            int offset = 2;
-            Buffer.BlockCopy(BitConverter.GetBytes(userId), 0, packet, offset, 4);
-            offset += 4;
-            Buffer.BlockCopy(BitConverter.GetBytes(position.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.z), 0, packet, offset + 8, 4);
-            offset += 12;
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.z), 0, packet, offset + 8, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.w), 0, packet, offset + 12, 4);
-
-            SendPacket(packet, distribution, userIds);
-        }
-
-        private void SendPacket(byte[] packet, PacketDistribution distribution, List<int> userIds = null)
+        public void SendPacket(byte[] packet, PacketDistribution distribution, List<int> userIds = null)
         {
             try
             {
@@ -525,7 +269,7 @@ namespace WorldBuilderCoop
                 ConsoleBase.WriteLine("Connected to host");
 
                 WorldBuilderSync.addUser(_myUserId, Vector3.zero, Quaternion.identity);
-                Core.Network.SendPlayerSync(_myUserId, Vector3.zero, Quaternion.identity, PacketDistribution.SendToOthers);
+                PacketSender.SendPlayerSync(_myUserId, Vector3.zero, Quaternion.identity, PacketDistribution.SendToOthers);
 
                 BlEditorManager.Instance.StartCoroutine(listenPacketLoop());
                 BlEditorManager.Instance.StartCoroutine(WorldBuilderSync.listenPlayerMovementLoop());

@@ -31,12 +31,18 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="UI\ConnectedUI.cs" />
+    <Compile Include="UI\ConnectUI.cs" />
+    <Compile Include="UI\MainUI.cs" />
+    <Compile Include="UI\Styles.cs" />
     <Compile Include="Core.cs" />
-    <Compile Include="NetworkHandler.cs" />
+    <Compile Include="Network\NetworkHandler.cs" />
+    <Compile Include="Network\PacketRecieve.cs" />
+    <Compile Include="Network\PacketSender.cs" />
     <Compile Include="Patches.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="UIHosting.cs" />
-    <Compile Include="WorldBuilderSync.cs" />
+    <Compile Include="UI\UIHosting.cs" />
+    <Compile Include="Behavior\WorldBuilderSync.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="!_0Harmony">
