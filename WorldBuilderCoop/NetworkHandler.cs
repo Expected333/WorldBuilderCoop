@@ -16,13 +16,15 @@ namespace WorldBuilderCoop
         private bool _isHost;
         private bool _isConnected;
         private int _userId;
-        private List<ConnectedClient> _connectedClients = new List<ConnectedClient>();
+        public List<ConnectedClient> _connectedClients = new List<ConnectedClient>();
 
         private UdpClient _udpClient;
         private int _udpPort = 7778;
 
+        private int _myUserId = -1;
         public bool IsHost => _isHost;
         public bool IsConnected => _isConnected;
+        public int MyUserId => _myUserId;
 
         public class ConnectedClient
         {
@@ -41,14 +43,12 @@ namespace WorldBuilderCoop
                 _isHost = true;
                 _isConnected = true;
                 _userId = 1;
-
-                _udpClient = new UdpClient(new IPEndPoint(IPAddress.Any, _udpPort));
-                _udpClient.EnableBroadcast = true;
+                _myUserId = 0;
 
                 ConsoleBase.WriteLine($"Host created on port {port}");
                 _tcpListener.BeginAcceptTcpClient(OnClientConnected, null);
                 BlEditorManager.Instance.StartCoroutine(listenHostPacketLoop());
-                BlEditorManager.Instance.StartCoroutine(listenUdpPacketLoop());
+                BlEditorManager.Instance.StartCoroutine(WorldBuilderSync.listenPlayerMovementLoop());
             }
             catch (Exception ex)
             {
@@ -66,10 +66,6 @@ namespace WorldBuilderCoop
                 }
                 _tcpClient = new TcpClient();
                 _tcpClient.BeginConnect(ipAddress, port, OnConnectedToHost, null);
-
-                _udpClient = new UdpClient();
-                _udpClient.Connect(ipAddress, _udpPort);
-
                 ConsoleBase.WriteLine($"Connecting to {ipAddress}:{port}");
             }
             catch (Exception ex)
@@ -121,18 +117,24 @@ namespace WorldBuilderCoop
 
         public IEnumerator listenUdpPacketLoop()
         {
-            while (_isConnected)
+            while (_isConnected && _isHost)
             {
                 try
                 {
                     if (_udpClient != null && _udpClient.Available > 0)
                     {
                         IPEndPoint remoteEP = new IPEndPoint(IPAddress.Any, 0);
-                        byte[] buffer = _udpClient.Receive(ref remoteEP);
-
-                        if (buffer.Length > 0)
+                        try
                         {
-                            ProcessUdpPacket(buffer, buffer.Length);
+                            byte[] buffer = _udpClient.Receive(ref remoteEP);
+                            if (buffer != null && buffer.Length > 0)
+                            {
+                                ProcessUdpPacket(buffer, buffer.Length);
+                            }
+                        }
+                        catch (SocketException)
+                        {
+                            // Ignore socket exceptions
                         }
                     }
                 }
@@ -450,10 +452,11 @@ namespace WorldBuilderCoop
 
         public void SendPlayerSync(int userId, Vector3 position, Quaternion rotation, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
         {
-            byte[] packet = new byte[1 + 4 + 12 + 16];
-            packet[0] = (byte)Packets.PlayerSync;
+            byte[] packet = new byte[2 + 4 + 12 + 16];
+            packet[0] = (byte)distribution;
+            packet[1] = (byte)Packets.PlayerSync;
 
-            int offset = 1;
+            int offset = 2;
             Buffer.BlockCopy(BitConverter.GetBytes(userId), 0, packet, offset, 4);
             offset += 4;
             Buffer.BlockCopy(BitConverter.GetBytes(position.x), 0, packet, offset, 4);
@@ -465,29 +468,16 @@ namespace WorldBuilderCoop
             Buffer.BlockCopy(BitConverter.GetBytes(rotation.z), 0, packet, offset + 8, 4);
             Buffer.BlockCopy(BitConverter.GetBytes(rotation.w), 0, packet, offset + 12, 4);
 
-            SendUdpPacket(packet, distribution, userIds);
+            SendPacket(packet, distribution, userIds);
         }
 
         private void SendUdpPacket(byte[] packet, PacketDistribution distribution, List<int> userIds = null)
         {
             try
             {
-                if (_isHost)
+                if (!_isHost && _udpClient != null)
                 {
-                    foreach (var client in _connectedClients)
-                    {
-                        if (client.Client.Connected)
-                        {
-                            _udpClient.Send(packet, packet.Length, new IPEndPoint(IPAddress.Parse(client.IpAddress), _udpPort));
-                        }
-                    }
-                }
-                else
-                {
-                    if (_udpClient != null)
-                    {
-                        _udpClient.Send(packet, packet.Length);
-                    }
+                    _udpClient.Send(packet, packet.Length);
                 }
             }
             catch (Exception ex)
@@ -572,8 +562,6 @@ namespace WorldBuilderCoop
                 _connectedClients.Add(connectedClient);
                 ConsoleBase.WriteLine($"Client connected: {connectedClient.IpAddress} (ID: {connectedClient.UserId})");
 
-                WorldBuilderSync.addUser(connectedClient.UserId, Vector3.zero, Quaternion.identity);
-
                 _tcpListener.BeginAcceptTcpClient(OnClientConnected, null);
             }
             catch (Exception ex)
@@ -589,8 +577,14 @@ namespace WorldBuilderCoop
                 if (result == null) return;
                 _tcpClient.EndConnect(result);
                 _isConnected = true;
+                _myUserId = UnityEngine.Random.Range(1, int.MaxValue);
                 ConsoleBase.WriteLine("Connected to host");
+
+                WorldBuilderSync.addUser(_myUserId, Vector3.zero, Quaternion.identity);
+                Core.Network.SendPlayerSync(_myUserId, Vector3.zero, Quaternion.identity, PacketDistribution.SendToOthers);
+
                 BlEditorManager.Instance.StartCoroutine(listenPacketLoop());
+                BlEditorManager.Instance.StartCoroutine(WorldBuilderSync.listenPlayerMovementLoop());
             }
             catch (Exception ex)
             {
@@ -607,6 +601,7 @@ namespace WorldBuilderCoop
                 {
                     try
                     {
+                        WorldBuilderSync.removeUser(client.UserId);
                         client.Stream?.Close();
                         client.Client?.Close();
                     }
@@ -618,6 +613,8 @@ namespace WorldBuilderCoop
             }
             else
             {
+                //TODO: my brain farting rn
+                WorldBuilderSync.removeUser(MyUserId.UserId);
                 _tcpClient?.Close();
                 _networkStream?.Close();
                 ConsoleBase.WriteLine("Disconnected from host");

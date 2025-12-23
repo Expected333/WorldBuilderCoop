@@ -4,7 +4,9 @@ using BrokeProtocol.Utility;
 using BrokeProtocol.Utility.ResourceDB;
 using ModLoader;
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace WorldBuilderCoop
@@ -74,16 +76,28 @@ namespace WorldBuilderCoop
 
         public static void userSync(int userId, Vector3 position, Quaternion rotation)
         {
-            UserAvatar[] userAvatars = UnityEngine.Object.FindObjectsByType<UserAvatar>(FindObjectsSortMode.None);
-
+            UserAvatar[] userAvatars = UnityEngine.Object.FindObjectsOfType<UserAvatar>();
+            UserAvatar foundAvatar = null;
             foreach (var avatar in userAvatars)
             {
                 if (avatar.UserId == userId)
                 {
-                    avatar.transform.position = position;
-                    avatar.transform.rotation = rotation;
-                    return;
+                    foundAvatar = avatar;
+                    break;
                 }
+            }
+            if (foundAvatar == null)
+            {
+                addUser(userId, position, rotation);
+            }
+            else
+            {
+                var interpolator = foundAvatar.GetComponent<UserInterpolator>();
+                if (interpolator == null)
+                {
+                    interpolator = foundAvatar.gameObject.AddComponent<UserInterpolator>();
+                }
+                interpolator.SetTarget(position, rotation);
             }
         }
 
@@ -97,13 +111,102 @@ namespace WorldBuilderCoop
 
             Renderer renderer = userSphere.GetComponent<Renderer>();
             Material material = new Material(Shader.Find("Standard"));
+            material.SetFloat("_Mode", 3);
+            material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            material.SetInt("_ZWrite", 0);
+            material.DisableKeyword("_ALPHATEST_ON");
+            material.EnableKeyword("_ALPHABLEND_ON");
+            material.renderQueue = 3000;
             material.color = new Color(1f, 0f, 0f, 0.5f);
             renderer.material = material;
 
             Collider collider = userSphere.GetComponent<Collider>();
             collider.enabled = false;
 
-            userSphere.AddComponent<UserAvatar>().UserId = userId;
+            UserAvatar avatar = userSphere.AddComponent<UserAvatar>();
+            avatar.UserId = userId;
+
+            GameObject arrow = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            arrow.name = $"User_{userId}_Arrow";
+            arrow.transform.parent = userSphere.transform;
+            arrow.transform.localPosition = Vector3.forward * 0.5f;
+            arrow.transform.localScale = new Vector3(0.1f, 0.1f, 0.3f);
+
+            Renderer arrowRenderer = arrow.GetComponent<Renderer>();
+            Material arrowMaterial = new Material(Shader.Find("Standard"));
+            arrowMaterial.color = Color.white;
+            arrowRenderer.material = arrowMaterial;
+
+            Collider arrowCollider = arrow.GetComponent<Collider>();
+            arrowCollider.enabled = false;
+        }
+
+        public static void removeUser(int userId)
+        {
+            var usersSphere = UnityEngine.Object.FindObjectsByType<UserAvatar>(FindObjectsSortMode.None);
+            var userSphere = usersSphere.First(x => x.UserId == userId);
+            if (userSphere)
+                GameObject.Destroy(userSphere);
+        }
+
+        public static IEnumerator listenPlayerMovementLoop()
+        {
+            Vector3 lastPosition = Vector3.zero;
+            Quaternion lastRotation = Quaternion.identity;
+            float syncThreshold = 0.05f;
+            float rotationThreshold = 1f;
+
+            while (Core.Network.IsConnected)
+            {
+                try
+                {
+                    var camera = MonoBehaviourSingleton<BlSceneCamera>.Instance;
+                    if (camera != null)
+                    {
+                        Vector3 currentPos = camera.mTransform.position;
+                        Quaternion currentRot = camera.mTransform.rotation;
+
+                        if (Vector3.Distance(currentPos, lastPosition) > syncThreshold ||
+                            Quaternion.Angle(currentRot, lastRotation) > rotationThreshold)
+                        {
+                            Core.Network.SendPlayerSync(Core.Network.MyUserId, currentPos, currentRot, PacketDistribution.SendToOthers);
+                            lastPosition = currentPos;
+                            lastRotation = currentRot;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ConsoleBase.WriteError($"Player movement sync error: {ex.Message}");
+                }
+                yield return new WaitForSeconds(0.05f);
+            }
+            yield break;
+        }
+    }
+
+    public class UserInterpolator : MonoBehaviour
+    {
+        private Vector3 targetPosition;
+        private Quaternion targetRotation;
+        private Vector3 currentPosition;
+        private Quaternion currentRotation;
+        private float interpolationSpeed = 10f;
+
+        public void SetTarget(Vector3 newPosition, Quaternion newRotation)
+        {
+            targetPosition = newPosition;
+            targetRotation = newRotation;
+        }
+
+        private void Update()
+        {
+            currentPosition = Vector3.Lerp(transform.position, targetPosition, Time.deltaTime * interpolationSpeed);
+            currentRotation = Quaternion.Lerp(transform.rotation, targetRotation, Time.deltaTime * interpolationSpeed);
+
+            transform.position = currentPosition;
+            transform.rotation = currentRotation;
         }
     }
 }
