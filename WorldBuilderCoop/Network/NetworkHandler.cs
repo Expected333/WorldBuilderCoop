@@ -265,12 +265,17 @@ namespace WorldBuilderCoop
                 if (result == null) return;
                 _tcpClient.EndConnect(result);
                 _isConnected = true;
-                _myUserId = UnityEngine.Random.Range(1, int.MaxValue);
-                ConsoleBase.WriteLine("Connected to host");
+                _myUserId = UserIdManager.GetNextUserId();
 
+                if (_myUserId == -1)
+                {
+                    ConsoleBase.WriteError("No available user IDs");
+                    return;
+                }
+
+                ConsoleBase.WriteLine($"Connected to host with ID: {_myUserId}");
                 WorldBuilderSync.addUser(_myUserId, Vector3.zero, Quaternion.identity);
                 PacketSender.SendPlayerSync(_myUserId, Vector3.zero, Quaternion.identity, PacketDistribution.SendToOthers);
-
                 BlEditorManager.Instance.StartCoroutine(listenPacketLoop());
                 BlEditorManager.Instance.StartCoroutine(WorldBuilderSync.listenPlayerMovementLoop());
             }
@@ -290,6 +295,7 @@ namespace WorldBuilderCoop
                     try
                     {
                         WorldBuilderSync.removeUser(client.UserId);
+                        UserIdManager.ReleaseUserId(client.UserId);
                         client.Stream?.Close();
                         client.Client?.Close();
                     }
@@ -297,15 +303,13 @@ namespace WorldBuilderCoop
                 }
                 _connectedClients.Clear();
                 _tcpListener?.Stop();
-                ConsoleBase.WriteLine("Host disconnected all clients");
             }
             else
             {
-                //TODO: my brain farting rn
                 WorldBuilderSync.removeUser(MyUserId);
+                UserIdManager.ReleaseUserId(MyUserId);
                 _tcpClient?.Close();
                 _networkStream?.Close();
-                ConsoleBase.WriteLine("Disconnected from host");
             }
 
             _isConnected = false;

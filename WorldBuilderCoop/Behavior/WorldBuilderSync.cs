@@ -140,18 +140,8 @@ namespace WorldBuilderCoop
             Collider arrowCollider = arrow.GetComponent<Collider>();
             arrowCollider.enabled = false;
 
-            GameObject textObj = new GameObject($"User_{userId}_Text");
-            textObj.transform.parent = userSphere.transform;
-            textObj.transform.localPosition = Vector3.up * 0.6f;
-
-            TextMesh textMesh = textObj.AddComponent<TextMesh>();
-            textMesh.text = userId.ToString();
-            textMesh.fontSize = 40;
-            textMesh.alignment = TextAlignment.Center;
-            textMesh.anchor = TextAnchor.MiddleCenter;
-
-            Renderer textRenderer = textObj.GetComponent<Renderer>();
-            textRenderer.material.color = Color.white;
+            AvatarTextDisplay textDisplay = userSphere.AddComponent<AvatarTextDisplay>();
+            textDisplay.Initialize(userId.ToString());
         }
 
         public static void removeUser(int userId)
@@ -210,7 +200,7 @@ namespace WorldBuilderCoop
             targetRotation = newRotation;
         }
 
-        private void Update()
+        public void Update()
         {
             currentPosition = Vector3.Lerp(transform.position, targetPosition, Time.deltaTime * interpolationSpeed);
             currentRotation = Quaternion.Lerp(transform.rotation, targetRotation, Time.deltaTime * interpolationSpeed);
