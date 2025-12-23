@@ -15,7 +15,7 @@ namespace WorldBuilderCoop
         {
             public static void Postfix(BlEditorManager __instance)
             {
-                // Use Unity's coroutine system to delay the patch
+                // bcs i got some shit, need to delay
                 if (__instance != null)
                 {
                     ConsoleBase.WriteLine(__instance);
@@ -25,7 +25,7 @@ namespace WorldBuilderCoop
 
             private static System.Collections.IEnumerator ApplyBuilderThemeDelayed(BlEditorManager instance)
             {
-                // Wait one frame to ensure MainMenu is fully initialized
+                // Wait one frame
                 yield return new WaitForFixedUpdate();
 
                 try
