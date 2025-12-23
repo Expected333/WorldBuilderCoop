@@ -43,9 +43,8 @@ namespace WorldBuilderCoop
         [HarmonyPatch(typeof(BrokeProtocol.Client.Builder.BlEditorManager), "DeleteSelection")]
         public class BlEditorManagerDeleteSelection_Patch
         {
-            public static void Postfix(BlEditorManager __instance)
+            public static void Prefix(BlEditorManager __instance)
             {
-                ConsoleBase.WriteLine("pmlsdjklkqedjq");
                 if (__instance != null && __instance.selectedTransforms != null && __instance.selectedTransforms.Count > 0)
                 {
                     List<int> objectIds = new List<int>();
@@ -61,7 +60,7 @@ namespace WorldBuilderCoop
 
                     if (objectIds.Count > 0)
                     {
-                        ConsoleBase.WriteLine(objectIds.ToArray());
+                        ConsoleBase.WriteLine(objectIds.Count);
                         Core.Network.SendRemoveObject(objectIds, PacketDistribution.SendToOthers);
                     }
                 }

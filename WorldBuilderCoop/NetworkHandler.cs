@@ -207,7 +207,7 @@ namespace WorldBuilderCoop
                 objectIds.Add(objectId);
                 offset += 4;
             }
-
+            ConsoleBase.WriteLine(objectIds.Count);
             WorldBuilderSync.destroyObject(objectIds);
         }
 
