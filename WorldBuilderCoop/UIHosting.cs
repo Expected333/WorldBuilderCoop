@@ -120,11 +120,11 @@ namespace WorldBuilderCoop
                 destroyConnectUI(sceneManager);
                 destroyHostAndConnectUI(sceneManager);
                 Core.Network.JoinAsClient(ip, port);
-                createDisconnectBtn(sceneManager);
+                createDisconnectUI(sceneManager);
             }
         }
 
-        private static void createDisconnectBtn(SceneManager sceneManager)
+        private static void createDisconnectUI(SceneManager sceneManager)
         {
             var root = sceneManager.uiDocument.rootVisualElement;
             Button disconnectBtn = new Button { text = "Disconnect", name = "Disconnect" };

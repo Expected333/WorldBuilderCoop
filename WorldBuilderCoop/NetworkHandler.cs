@@ -614,7 +614,7 @@ namespace WorldBuilderCoop
             else
             {
                 //TODO: my brain farting rn
-                WorldBuilderSync.removeUser(MyUserId.UserId);
+                WorldBuilderSync.removeUser(MyUserId);
                 _tcpClient?.Close();
                 _networkStream?.Close();
                 ConsoleBase.WriteLine("Disconnected from host");
