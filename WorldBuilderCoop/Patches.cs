@@ -1,0 +1,76 @@
+﻿using BrokeProtocol.Client.Builder;
+using BrokeProtocol.Managers;
+using BrokeProtocol.Utility;
+using HarmonyLib;
+using ModLoader;
+using System.IO;
+using UnityEngine;
+
+namespace WorldBuilderCoop
+{
+    internal class Patches
+    {
+        [HarmonyPatch(typeof(BrokeProtocol.Client.Builder.BlEditorManager), "Start")]
+        public class BlEditorManager_Patch
+        {
+            public static void Postfix(BlEditorManager __instance)
+            {
+                // Use Unity's coroutine system to delay the patch
+                if (__instance != null)
+                {
+                    ConsoleBase.WriteLine(__instance);
+                    __instance.StartCoroutine(ApplyBuilderThemeDelayed(__instance));
+                }
+            }
+
+            private static System.Collections.IEnumerator ApplyBuilderThemeDelayed(BlEditorManager instance)
+            {
+                // Wait one frame to ensure MainMenu is fully initialized
+                yield return new WaitForFixedUpdate();
+
+                try
+                {
+                    UIHosting.ApplyBlEditorTheme();
+                }
+                catch (System.Exception ex)
+                {
+                    ConsoleBase.WriteLine($"[WorldBuilder] WB_Patch delayed error: {ex.Message}");
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(BrokeProtocol.Client.UI.BlPrefabItemButton), "Clicked")]
+        public class BlPrefabItemButton_Patch
+        {
+            public static void Postfix(BrokeProtocol.Client.UI.BlPrefabItemButton __instance)
+            {
+                GameObject spawnedObject = null;
+                var originalMethod = typeof(BrokeProtocol.Client.UI.BlPrefabItemButton).GetMethod("Clicked", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                var sceneManager = MonoBehaviourSingleton<SceneManager>.Instance;
+                var blEditorManager = MonoBehaviourSingleton<BlEditorManager>.Instance;
+                if (blEditorManager.objectInspector is BlPrefabObjectInspector || (bool)blEditorManager.itemOptionInspector || __instance.CompareTag("Folder"))
+                {
+                    return;
+                }
+                Transform mTransform = MonoBehaviourSingleton<BlSceneCamera>.Instance.mTransform;
+                Ray ray = new Ray(mTransform.position, mTransform.forward);
+                Vector3 hitPoint;
+                Transform obj;
+                Vector3 position = ((!blEditorManager.ObjectRaycast(ray, out obj, out hitPoint)) ? MonoBehaviourSingleton<BlSceneCamera>.Instance.RoundedPivot : hitPoint.Snap(0.01f));
+                spawnedObject = sceneManager.InstantiateEditor(Traverse.Create(__instance).Field("asset").GetValue() as GameObject, sceneManager.currentPlace, position, Quaternion.identity);
+                if (spawnedObject != null)
+                {
+                    Vector3 scale = spawnedObject.transform.localScale;
+                    Quaternion rotation = spawnedObject.transform.rotation;
+                    int objectId = spawnedObject.GetInstanceID();
+                    string prefabName = spawnedObject.name;
+
+                    string currentPath = blEditorManager.currentPrefabPath;
+                    string fullPath = Path.Combine(currentPath, prefabName);
+
+                    Core.Network.SendPlaceObject(position, rotation, scale, objectId, fullPath, PacketDistribution.SendToOthers);
+                }
+            }
+        }
+    }
+}
