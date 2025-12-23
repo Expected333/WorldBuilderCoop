@@ -72,6 +72,8 @@ namespace WorldBuilderCoop
             {
                 try
                 {
+                    List<ConnectedClient> disconnectedClients = new List<ConnectedClient>();
+
                     foreach (var client in _connectedClients)
                     {
                         if (client.Client.Connected && client.Stream.DataAvailable)
@@ -84,6 +86,16 @@ namespace WorldBuilderCoop
                                 ProcessPacket(buffer, bytesRead);
                             }
                         }
+                        else if (!client.Client.Connected)
+                        {
+                            disconnectedClients.Add(client);
+                        }
+                    }
+
+                    foreach (var client in disconnectedClients)
+                    {
+                        _connectedClients.Remove(client);
+                        ConsoleBase.WriteLine($"Client disconnected: {client.IpAddress} (ID: {client.UserId})");
                     }
                 }
                 catch (Exception ex)
@@ -500,6 +512,34 @@ namespace WorldBuilderCoop
                 ConsoleBase.WriteError($"Connection failed: {ex.Message}");
                 _isConnected = false;
             }
+        }
+
+        public void Disconnect()
+        {
+            if (_isHost)
+            {
+                foreach (var client in _connectedClients)
+                {
+                    try
+                    {
+                        client.Stream?.Close();
+                        client.Client?.Close();
+                    }
+                    catch { }
+                }
+                _connectedClients.Clear();
+                _tcpListener?.Stop();
+                ConsoleBase.WriteLine("Host disconnected all clients");
+            }
+            else
+            {
+                _tcpClient?.Close();
+                _networkStream?.Close();
+                ConsoleBase.WriteLine("Disconnected from host");
+            }
+
+            _isConnected = false;
+            _isHost = false;
         }
 
         public void Shutdown()

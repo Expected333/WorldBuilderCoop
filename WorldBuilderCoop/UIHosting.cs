@@ -58,7 +58,7 @@ namespace WorldBuilderCoop
 
             ApplyButtonStyle(hostBtn);
 
-            hostBtn.clicked += () => Core.Network.CreateHost();
+            hostBtn.clicked += () => createHost(sceneManager);
             root.Add(hostBtn);
         }
 
@@ -71,6 +71,13 @@ namespace WorldBuilderCoop
 
             joinBtn.clicked += () => createConnectUI(sceneManager);
             root.Add(joinBtn);
+        }
+
+        private static void createHost(SceneManager sceneManager)
+        {
+            destroyHostAndConnectUI(sceneManager);
+            Core.Network.CreateHost();
+            createDisconnectBtn(sceneManager);
         }
 
         private static void createConnectUI(SceneManager sceneManager)
@@ -110,8 +117,55 @@ namespace WorldBuilderCoop
         {
             if (ushort.TryParse(portStr, out ushort port))
             {
-                Core.Network.JoinAsClient(ip, port);
                 destroyConnectUI(sceneManager);
+                destroyHostAndConnectUI(sceneManager);
+                Core.Network.JoinAsClient(ip, port);
+                createDisconnectBtn(sceneManager);
+            }
+        }
+
+        private static void createDisconnectBtn(SceneManager sceneManager)
+        {
+            var root = sceneManager.uiDocument.rootVisualElement;
+            Button disconnectBtn = new Button { text = "Disconnect", name = "Disconnect" };
+
+            ApplyButtonStyle(disconnectBtn);
+
+            disconnectBtn.style.color = Color.red;
+
+            disconnectBtn.clicked += () => disconnect(sceneManager);
+            root.Add(disconnectBtn);
+        }
+
+        private static void disconnect(SceneManager sceneManager)
+        {
+            Core.Network.Disconnect();
+            destroyDisconnectBtn(sceneManager);
+            createHostBtn(sceneManager);
+            createJoinBtn(sceneManager);
+        }
+
+        private static void destroyDisconnectBtn(SceneManager sceneManager)
+        {
+            var root = sceneManager.uiDocument.rootVisualElement;
+            var disconnectBtn = root.Q<Button>("Disconnect");
+
+            if (disconnectBtn != null)
+            {
+                root.Remove(disconnectBtn);
+            }
+        }
+
+        private static void destroyHostAndConnectUI(SceneManager sceneManager)
+        {
+            var root = sceneManager.uiDocument.rootVisualElement;
+            var HostButton = root.Q<Button>("HostButton");
+            var JoinButton = root.Q<Button>("JoinButton");
+
+            if (HostButton != null && JoinButton != null)
+            {
+                root.Remove(HostButton);
+                root.Remove(JoinButton);
             }
         }
 
@@ -173,10 +227,10 @@ namespace WorldBuilderCoop
 
             s.transitionDuration = new List<TimeValue> { new TimeValue(100, TimeUnit.Millisecond) };
             s.transitionProperty = new List<StylePropertyName> {
-        new StylePropertyName("background-color"),
-        new StylePropertyName("scale"),
-        new StylePropertyName("border-color")
-    };
+                new StylePropertyName("background-color"),
+                new StylePropertyName("scale"),
+                new StylePropertyName("border-color")
+            };
 
             btn.RegisterCallback<MouseEnterEvent>(evt =>
             {
