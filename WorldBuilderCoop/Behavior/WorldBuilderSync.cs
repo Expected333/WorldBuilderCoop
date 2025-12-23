@@ -14,6 +14,11 @@ namespace WorldBuilderCoop
 {
     internal class WorldBuilderSync
     {
+        public const int TargetFPS = 30;
+        public const float SyncInterval = 1f / TargetFPS;
+        public const float PositionThreshold = 0.05f;
+        public const float RotationThreshold = 1f;
+
         public static void placeObject(Vector3 position, Quaternion rotation, Vector3 scale, int objectId, string prefabPath)
         {
             try
@@ -112,13 +117,6 @@ namespace WorldBuilderCoop
 
             Renderer renderer = userSphere.GetComponent<Renderer>();
             Material material = new Material(Shader.Find("Standard"));
-            material.SetFloat("_Mode", 3);
-            material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-            material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-            material.SetInt("_ZWrite", 0);
-            material.DisableKeyword("_ALPHATEST_ON");
-            material.EnableKeyword("_ALPHABLEND_ON");
-            material.renderQueue = 3000;
             material.color = new Color(1f, 0f, 0f, 0.5f);
             renderer.material = material;
 
@@ -141,6 +139,19 @@ namespace WorldBuilderCoop
 
             Collider arrowCollider = arrow.GetComponent<Collider>();
             arrowCollider.enabled = false;
+
+            GameObject textObj = new GameObject($"User_{userId}_Text");
+            textObj.transform.parent = userSphere.transform;
+            textObj.transform.localPosition = Vector3.up * 0.6f;
+
+            TextMesh textMesh = textObj.AddComponent<TextMesh>();
+            textMesh.text = userId.ToString();
+            textMesh.fontSize = 40;
+            textMesh.alignment = TextAlignment.Center;
+            textMesh.anchor = TextAnchor.MiddleCenter;
+
+            Renderer textRenderer = textObj.GetComponent<Renderer>();
+            textRenderer.material.color = Color.white;
         }
 
         public static void removeUser(int userId)
@@ -155,8 +166,6 @@ namespace WorldBuilderCoop
         {
             Vector3 lastPosition = Vector3.zero;
             Quaternion lastRotation = Quaternion.identity;
-            float syncThreshold = 0.05f;
-            float rotationThreshold = 1f;
 
             while (Core.Network.IsConnected)
             {
@@ -168,8 +177,8 @@ namespace WorldBuilderCoop
                         Vector3 currentPos = camera.mTransform.position;
                         Quaternion currentRot = camera.mTransform.rotation;
 
-                        if (Vector3.Distance(currentPos, lastPosition) > syncThreshold ||
-                            Quaternion.Angle(currentRot, lastRotation) > rotationThreshold)
+                        if (Vector3.Distance(currentPos, lastPosition) > PositionThreshold ||
+                            Quaternion.Angle(currentRot, lastRotation) > RotationThreshold)
                         {
                             PacketSender.SendPlayerSync(Core.Network.MyUserId, currentPos, currentRot, PacketDistribution.SendToOthers);
                             lastPosition = currentPos;
@@ -181,7 +190,7 @@ namespace WorldBuilderCoop
                 {
                     ConsoleBase.WriteError($"Player movement sync error: {ex.Message}");
                 }
-                yield return new WaitForSeconds(0.05f);
+                yield return new WaitForSeconds(SyncInterval);
             }
             yield break;
         }
