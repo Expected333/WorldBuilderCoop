@@ -18,6 +18,9 @@ namespace WorldBuilderCoop
         private int _userId;
         private List<ConnectedClient> _connectedClients = new List<ConnectedClient>();
 
+        private UdpClient _udpClient;
+        private int _udpPort = 7778;
+
         public bool IsHost => _isHost;
         public bool IsConnected => _isConnected;
 
@@ -38,9 +41,14 @@ namespace WorldBuilderCoop
                 _isHost = true;
                 _isConnected = true;
                 _userId = 1;
+
+                _udpClient = new UdpClient(new IPEndPoint(IPAddress.Any, _udpPort));
+                _udpClient.EnableBroadcast = true;
+
                 ConsoleBase.WriteLine($"Host created on port {port}");
                 _tcpListener.BeginAcceptTcpClient(OnClientConnected, null);
                 BlEditorManager.Instance.StartCoroutine(listenHostPacketLoop());
+                BlEditorManager.Instance.StartCoroutine(listenUdpPacketLoop());
             }
             catch (Exception ex)
             {
@@ -58,6 +66,10 @@ namespace WorldBuilderCoop
                 }
                 _tcpClient = new TcpClient();
                 _tcpClient.BeginConnect(ipAddress, port, OnConnectedToHost, null);
+
+                _udpClient = new UdpClient();
+                _udpClient.Connect(ipAddress, _udpPort);
+
                 ConsoleBase.WriteLine($"Connecting to {ipAddress}:{port}");
             }
             catch (Exception ex)
@@ -107,6 +119,32 @@ namespace WorldBuilderCoop
             yield break;
         }
 
+        public IEnumerator listenUdpPacketLoop()
+        {
+            while (_isConnected)
+            {
+                try
+                {
+                    if (_udpClient != null && _udpClient.Available > 0)
+                    {
+                        IPEndPoint remoteEP = new IPEndPoint(IPAddress.Any, 0);
+                        byte[] buffer = _udpClient.Receive(ref remoteEP);
+
+                        if (buffer.Length > 0)
+                        {
+                            ProcessUdpPacket(buffer, buffer.Length);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ConsoleBase.WriteError($"UDP listen error: {ex.Message}");
+                }
+                yield return new WaitForSeconds(0.01f);
+            }
+            yield break;
+        }
+
         public IEnumerator listenPacketLoop()
         {
             yield return new WaitForSeconds(0.5f);
@@ -141,6 +179,18 @@ namespace WorldBuilderCoop
                 yield return new WaitForSeconds(0.01f);
             }
             yield break;
+        }
+
+        private void ProcessUdpPacket(byte[] data, int length)
+        {
+            if (length < 2) return;
+
+            Packets packetType = (Packets)data[0];
+
+            if (packetType == Packets.PlayerSync)
+            {
+                HandlePlayerSync(data, length);
+            }
         }
 
         private void ProcessPacket(byte[] data, int length)
@@ -219,7 +269,7 @@ namespace WorldBuilderCoop
                 objectIds.Add(objectId);
                 offset += 4;
             }
-            ConsoleBase.WriteLine(objectIds.Count);
+            ConsoleBase.WriteLine("packet recieved " + objectIds.Count);
             WorldBuilderSync.destroyObject(objectIds);
         }
 
@@ -344,7 +394,7 @@ namespace WorldBuilderCoop
                 Buffer.BlockCopy(BitConverter.GetBytes(objectId), 0, packet, offset, 4);
                 offset += 4;
             }
-
+            ConsoleBase.WriteLine("Packet send " + objectIds.Count);
             SendPacket(packet, distribution, userIds);
         }
 
@@ -400,18 +450,50 @@ namespace WorldBuilderCoop
 
         public void SendPlayerSync(int userId, Vector3 position, Quaternion rotation, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
         {
-            byte[] packet = new byte[2 + 4 + 12 + 16];
-            packet[0] = (byte)distribution;
-            packet[1] = (byte)Packets.PlayerSync;
-            Buffer.BlockCopy(BitConverter.GetBytes(userId), 0, packet, 2, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.x), 0, packet, 6, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.y), 0, packet, 10, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.z), 0, packet, 14, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.x), 0, packet, 18, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.y), 0, packet, 22, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.z), 0, packet, 26, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.w), 0, packet, 30, 4);
-            SendPacket(packet, distribution, userIds);
+            byte[] packet = new byte[1 + 4 + 12 + 16];
+            packet[0] = (byte)Packets.PlayerSync;
+
+            int offset = 1;
+            Buffer.BlockCopy(BitConverter.GetBytes(userId), 0, packet, offset, 4);
+            offset += 4;
+            Buffer.BlockCopy(BitConverter.GetBytes(position.x), 0, packet, offset, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(position.y), 0, packet, offset + 4, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(position.z), 0, packet, offset + 8, 4);
+            offset += 12;
+            Buffer.BlockCopy(BitConverter.GetBytes(rotation.x), 0, packet, offset, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(rotation.y), 0, packet, offset + 4, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(rotation.z), 0, packet, offset + 8, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(rotation.w), 0, packet, offset + 12, 4);
+
+            SendUdpPacket(packet, distribution, userIds);
+        }
+
+        private void SendUdpPacket(byte[] packet, PacketDistribution distribution, List<int> userIds = null)
+        {
+            try
+            {
+                if (_isHost)
+                {
+                    foreach (var client in _connectedClients)
+                    {
+                        if (client.Client.Connected)
+                        {
+                            _udpClient.Send(packet, packet.Length, new IPEndPoint(IPAddress.Parse(client.IpAddress), _udpPort));
+                        }
+                    }
+                }
+                else
+                {
+                    if (_udpClient != null)
+                    {
+                        _udpClient.Send(packet, packet.Length);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ConsoleBase.WriteError($"UDP send error: {ex.Message}");
+            }
         }
 
         private void SendPacket(byte[] packet, PacketDistribution distribution, List<int> userIds = null)
@@ -489,6 +571,9 @@ namespace WorldBuilderCoop
                 };
                 _connectedClients.Add(connectedClient);
                 ConsoleBase.WriteLine($"Client connected: {connectedClient.IpAddress} (ID: {connectedClient.UserId})");
+
+                WorldBuilderSync.addUser(connectedClient.UserId, Vector3.zero, Quaternion.identity);
+
                 _tcpListener.BeginAcceptTcpClient(OnClientConnected, null);
             }
             catch (Exception ex)
@@ -546,6 +631,7 @@ namespace WorldBuilderCoop
         {
             _tcpClient?.Close();
             _tcpListener?.Stop();
+            _udpClient?.Close();
             foreach (var client in _connectedClients)
             {
                 client.Stream?.Close();
@@ -561,6 +647,11 @@ namespace WorldBuilderCoop
     public class NetworkObject : MonoBehaviour
     {
         public int NetworkId { get; set; }
+    }
+
+    public class UserAvatar : MonoBehaviour
+    {
+        public int UserId { get; set; }
     }
 
     public enum Packets

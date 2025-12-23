@@ -1,4 +1,5 @@
 ﻿using BrokeProtocol.Client.Builder;
+using BrokeProtocol.Managers;
 using BrokeProtocol.Utility;
 using HarmonyLib;
 using ModLoader;
@@ -51,6 +52,8 @@ namespace WorldBuilderCoop
                     foreach (var transform in __instance.selectedTransforms)
                     {
                         NetworkObject networkObject = transform.GetComponent<NetworkObject>();
+                        ConsoleBase.WriteLine(transform);
+                        ConsoleBase.WriteLine("network object: " + networkObject);
                         if (networkObject != null)
                         {
                             objectIds.Add(networkObject.NetworkId);
@@ -69,27 +72,51 @@ namespace WorldBuilderCoop
         [HarmonyPatch(typeof(BrokeProtocol.Client.UI.BlPrefabItemButton), "Clicked")]
         public class BlPrefabItemButton_Patch
         {
-            public static void Postfix(BrokeProtocol.Client.UI.BlPrefabItemButton __instance)
+            public static bool Prefix(BrokeProtocol.Client.UI.BlPrefabItemButton __instance)
             {
-                var blEditorManager = MonoBehaviourSingleton<BlEditorManager>.Instance;
+                GameObject asset = Traverse.Create(__instance).Field("asset").GetValue() as GameObject;
 
-                if (blEditorManager.objectInspector is BlPrefabObjectInspector || (bool)blEditorManager.itemOptionInspector || __instance.CompareTag("Folder"))
+                if (__instance.CompareTag("Folder"))
                 {
-                    return;
+                    MonoBehaviourSingleton<BlEditorManager>.Instance.FillBrowser(Path.Combine(MonoBehaviourSingleton<BlEditorManager>.Instance.currentPrefabPath, __instance.name), search: false);
+                    return false;
+                }
+                if (MonoBehaviourSingleton<BlEditorManager>.Instance.objectInspector is BlPrefabObjectInspector)
+                {
+                    MonoBehaviourSingleton<BlEditorManager>.Instance.objectInspector.OnValueChange(asset);
+                    MonoBehaviourSingleton<BlEditorManager>.Instance.objectInspector = null;
+                    return false;
+                }
+                if ((bool)MonoBehaviourSingleton<BlEditorManager>.Instance.itemOptionInspector)
+                {
+                    MonoBehaviourSingleton<BlEditorManager>.Instance.itemOptionInspector.OnValueChange(asset.name);
+                    MonoBehaviourSingleton<BlEditorManager>.Instance.itemOptionInspector = null;
+                    return false;
                 }
 
                 Transform mTransform = MonoBehaviourSingleton<BlSceneCamera>.Instance.mTransform;
                 Ray ray = new Ray(mTransform.position, mTransform.forward);
-                Vector3 hitPoint;
                 Transform obj;
-                Vector3 position = ((!blEditorManager.ObjectRaycast(ray, out obj, out hitPoint)) ? MonoBehaviourSingleton<BlSceneCamera>.Instance.RoundedPivot : hitPoint.Snap(0.01f));
+                Vector3 hitPoint;
+                Vector3 position = ((!MonoBehaviourSingleton<BlEditorManager>.Instance.ObjectRaycast(ray, out obj, out hitPoint)) ? MonoBehaviourSingleton<BlSceneCamera>.Instance.RoundedPivot : hitPoint.Snap(0.01f));
+                GameObject gameObject = MonoBehaviourSingleton<SceneManager>.Instance.InstantiateEditor(asset, MonoBehaviourSingleton<SceneManager>.Instance.currentPlace, position, Quaternion.identity);
 
-                string prefabName = __instance.name;
-                string currentPath = blEditorManager.currentPrefabPath;
-                string fullPath = Path.Combine(currentPath, prefabName);
-                int objectId = UnityEngine.Random.Range(int.MinValue, int.MaxValue);
+                if (gameObject != null && gameObject.transform != null)
+                {
+                    NetworkObject networkObject = gameObject.AddComponent<NetworkObject>();
+                    networkObject.NetworkId = UnityEngine.Random.Range(int.MinValue, int.MaxValue);
 
-                Core.Network.SendPlaceObject(position, Quaternion.identity, Vector3.one, objectId, fullPath, PacketDistribution.SendToOthers);
+                    string prefabName = __instance.name;
+                    string currentPath = MonoBehaviourSingleton<BlEditorManager>.Instance.currentPrefabPath;
+                    string fullPath = Path.Combine(currentPath, prefabName);
+
+                    // Ne pas appeler SetSelection() ici
+                    // MonoBehaviourSingleton<BlEditorManager>.Instance.SetSelection(gameObject.transform);
+
+                    Core.Network.SendPlaceObject(position, Quaternion.identity, Vector3.one, networkObject.NetworkId, fullPath, PacketDistribution.SendToOthers);
+                }
+
+                return false;
             }
         }
     }
