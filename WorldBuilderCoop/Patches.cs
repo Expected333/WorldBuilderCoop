@@ -3,6 +3,7 @@ using BrokeProtocol.Managers;
 using BrokeProtocol.Utility;
 using HarmonyLib;
 using ModLoader;
+using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 
@@ -35,6 +36,34 @@ namespace WorldBuilderCoop
                 catch (System.Exception ex)
                 {
                     ConsoleBase.WriteLine($"[WorldBuilder] WB_Patch delayed error: {ex.Message}");
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(BrokeProtocol.Client.Builder.BlEditorManager), "DeleteSelection")]
+        public class BlEditorManagerDeleteSelection_Patch
+        {
+            public static void Postfix(BlEditorManager __instance)
+            {
+                ConsoleBase.WriteLine("pmlsdjklkqedjq");
+                if (__instance != null && __instance.selectedTransforms != null && __instance.selectedTransforms.Count > 0)
+                {
+                    List<int> objectIds = new List<int>();
+
+                    foreach (var transform in __instance.selectedTransforms)
+                    {
+                        NetworkObject networkObject = transform.GetComponent<NetworkObject>();
+                        if (networkObject != null)
+                        {
+                            objectIds.Add(networkObject.NetworkId);
+                        }
+                    }
+
+                    if (objectIds.Count > 0)
+                    {
+                        ConsoleBase.WriteLine(objectIds.ToArray());
+                        Core.Network.SendRemoveObject(objectIds, PacketDistribution.SendToOthers);
+                    }
                 }
             }
         }

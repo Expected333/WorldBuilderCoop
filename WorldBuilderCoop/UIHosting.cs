@@ -9,6 +9,8 @@ namespace WorldBuilderCoop
 {
     internal class UIHosting
     {
+        private static bool isConnectUIExist = false;
+
         public static void ApplyBlEditorTheme()
         {
             var sceneManager = MonoBehaviourSingleton<SceneManager>.Instance;
@@ -73,6 +75,7 @@ namespace WorldBuilderCoop
 
         private static void createConnectUI(SceneManager sceneManager)
         {
+            if (isConnectUIExist) return;
             var root = sceneManager.uiDocument.rootVisualElement;
 
             VisualElement container = new VisualElement();
@@ -100,6 +103,7 @@ namespace WorldBuilderCoop
             container.Add(portInput);
             container.Add(connectBtn);
             root.Add(container);
+            isConnectUIExist = true;
         }
 
         private static void connectSession(SceneManager sceneManager, string ip, string portStr)
@@ -119,6 +123,7 @@ namespace WorldBuilderCoop
             if (container != null)
             {
                 root.Remove(container);
+                isConnectUIExist = false;
             }
         }
 

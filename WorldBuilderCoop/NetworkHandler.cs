@@ -40,6 +40,7 @@ namespace WorldBuilderCoop
                 _userId = 1;
                 ConsoleBase.WriteLine($"Host created on port {port}");
                 _tcpListener.BeginAcceptTcpClient(OnClientConnected, null);
+                BlEditorManager.Instance.StartCoroutine(listenHostPacketLoop());
             }
             catch (Exception ex)
             {
@@ -63,6 +64,35 @@ namespace WorldBuilderCoop
             {
                 ConsoleBase.WriteError($"Failed to join: {ex.Message}");
             }
+        }
+
+        public IEnumerator listenHostPacketLoop()
+        {
+            while (_isConnected && _isHost)
+            {
+                try
+                {
+                    foreach (var client in _connectedClients)
+                    {
+                        if (client.Client.Connected && client.Stream.DataAvailable)
+                        {
+                            byte[] buffer = new byte[4096];
+                            int bytesRead = client.Stream.Read(buffer, 0, buffer.Length);
+
+                            if (bytesRead > 0)
+                            {
+                                ProcessPacket(buffer, bytesRead);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ConsoleBase.WriteError($"Host listen error: {ex.Message}");
+                }
+                yield return new WaitForSeconds(0.01f);
+            }
+            yield break;
         }
 
         public IEnumerator listenPacketLoop()
@@ -166,8 +196,19 @@ namespace WorldBuilderCoop
 
         private void HandleRemoveObject(byte[] data, int length)
         {
-            int objectId = BitConverter.ToInt32(data, 2);
-            WorldBuilderSync.destroyObject(objectId);
+            int offset = 2;
+            int count = BitConverter.ToInt32(data, offset);
+            offset += 4;
+
+            List<int> objectIds = new List<int>();
+            for (int i = 0; i < count; i++)
+            {
+                int objectId = BitConverter.ToInt32(data, offset);
+                objectIds.Add(objectId);
+                offset += 4;
+            }
+
+            WorldBuilderSync.destroyObject(objectIds);
         }
 
         private void HandleUpdateObject(byte[] data, int length)
@@ -276,12 +317,22 @@ namespace WorldBuilderCoop
             SendPacket(packet, distribution, userIds);
         }
 
-        public void SendRemoveObject(int objectId, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
+        public void SendRemoveObject(List<int> objectIds, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
         {
-            byte[] packet = new byte[2 + 4];
+            byte[] packet = new byte[2 + 4 + (objectIds.Count * 4)];
             packet[0] = (byte)distribution;
             packet[1] = (byte)Packets.RemoveObject;
-            Buffer.BlockCopy(BitConverter.GetBytes(objectId), 0, packet, 2, 4);
+
+            int offset = 2;
+            Buffer.BlockCopy(BitConverter.GetBytes(objectIds.Count), 0, packet, offset, 4);
+            offset += 4;
+
+            foreach (var objectId in objectIds)
+            {
+                Buffer.BlockCopy(BitConverter.GetBytes(objectId), 0, packet, offset, 4);
+                offset += 4;
+            }
+
             SendPacket(packet, distribution, userIds);
         }
 
@@ -465,6 +516,11 @@ namespace WorldBuilderCoop
             _isHost = false;
             ConsoleBase.WriteLine("Network shutdown");
         }
+    }
+
+    public class NetworkObject : MonoBehaviour
+    {
+        public int NetworkId { get; set; }
     }
 
     public enum Packets
