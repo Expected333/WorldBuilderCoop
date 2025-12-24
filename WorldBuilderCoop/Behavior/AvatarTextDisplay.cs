@@ -74,13 +74,13 @@ namespace BrokeProtocol.Client.Builder
             Text text = _textObj.AddComponent<Text>();
             text.text = playerName;
             text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-            text.fontSize = 20;
+            text.fontSize = 40;
             text.fontStyle = FontStyle.Bold;
             text.alignment = TextAnchor.MiddleCenter;
             text.color = Color.white;
             text.resizeTextForBestFit = true;
             text.resizeTextMinSize = 8;
-            text.resizeTextMaxSize = 20;
+            text.resizeTextMaxSize = 40;
 
             RectTransform rectTransform = _textObj.GetComponent<RectTransform>();
             rectTransform.sizeDelta = new Vector2(100, 50);

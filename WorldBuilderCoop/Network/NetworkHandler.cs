@@ -3,8 +3,10 @@ using ModLoader;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using Unity.Mathematics;
 using UnityEngine;
 using WorldBuilderCoop.Network;
 namespace WorldBuilderCoop
@@ -21,6 +23,8 @@ namespace WorldBuilderCoop
         private bool _isConnected;
         private int _userId;
         public List<ConnectedClient> _connectedClients = new List<ConnectedClient>();
+
+        public List<UserAvatar> connectedClientAvatar = new List<UserAvatar>();
 
         private int _myUserId = -1;
         public bool IsHost => _isHost;
@@ -79,37 +83,68 @@ namespace WorldBuilderCoop
         {
             while (_isConnected && _isHost)
             {
-                try
+                for (int i = _connectedClients.Count - 1; i >= 0; i--)
                 {
-                    List<ConnectedClient> disconnectedClients = new List<ConnectedClient>();
-
-                    foreach (var client in _connectedClients)
+                    var client = _connectedClients[i];
+                    try
                     {
-                        if (client.Client.Connected && client.Stream.DataAvailable)
+                        if (client.Client.Connected)
                         {
-                            byte[] buffer = new byte[4096];
-                            int bytesRead = client.Stream.Read(buffer, 0, buffer.Length);
+                            if (client.Client.Available >= 4)
+                            {
+                                byte[] sizeBytes = new byte[4];
+                                int readHeader = client.Stream.Read(sizeBytes, 0, 4);
+                                if (readHeader < 4) continue;
 
-                            if (bytesRead > 0)
-                                ProcessPacket(buffer, bytesRead);
+                                int packetSize = BitConverter.ToInt32(sizeBytes, 0);
+
+                                if (packetSize > 0 && packetSize <= 1048576)
+                                {
+                                    byte[] buffer = new byte[packetSize];
+                                    int totalRead = 0;
+                                    while (totalRead < packetSize)
+                                    {
+                                        int read = client.Stream.Read(buffer, totalRead, packetSize - totalRead);
+                                        if (read == 0) break;
+                                        totalRead += read;
+                                    }
+
+                                    ProcessPacket(buffer, totalRead);
+
+                                    byte[] fullPacket = new byte[buffer.Length + 4];
+                                    Buffer.BlockCopy(BitConverter.GetBytes(packetSize), 0, fullPacket, 0, 4);
+                                    Buffer.BlockCopy(buffer, 0, fullPacket, 4, buffer.Length);
+
+                                    SendPacket(fullPacket, PacketDistribution.SendToOthers, new List<int> { client.UserId });
+                                }
+                            }
                         }
-                        else if (!client.Client.Connected)
-                            disconnectedClients.Add(client);
+                        else
+                        {
+                            HandleDisconnect(client);
+                        }
                     }
-
-                    foreach (var client in disconnectedClients)
+                    catch (Exception)
                     {
-                        _connectedClients.Remove(client);
-                        ConsoleBase.WriteLine($"Client disconnected: {client.IpAddress} (ID: {client.UserId})");
+                        HandleDisconnect(client);
                     }
-                }
-                catch (Exception ex)
-                {
-                    ConsoleBase.WriteError($"Host listen error: {ex.Message}");
                 }
                 yield return new WaitForSeconds(0.01f);
             }
-            yield break;
+        }
+
+        private void HandleDisconnect(ConnectedClient client)
+        {
+            int disconnectedId = client.UserId;
+
+            _connectedClients.Remove(client);
+            UserIdManager.ReleaseUserId(disconnectedId);
+
+            try { client.Stream?.Close(); } catch { }
+            try { client.Client?.Close(); } catch { }
+
+            PacketSender.SendRemovePlayer(disconnectedId, PacketDistribution.SendToOthers);
+            WorldBuilderSync.removeUser(disconnectedId);
         }
 
         public IEnumerator listenPacketLoop()
@@ -118,32 +153,64 @@ namespace WorldBuilderCoop
 
             while (_isConnected)
             {
-                try
+                bool hasError = false;
+
+                if (_tcpClient != null && _tcpClient.Connected)
                 {
-                    if (_tcpClient != null && _tcpClient.Connected)
+                    if (_networkStream == null)
                     {
-                        if (_networkStream == null)
-                            _networkStream = _tcpClient.GetStream();
+                        try { _networkStream = _tcpClient.GetStream(); }
+                        catch { hasError = true; }
+                    }
 
-                        if (_networkStream.DataAvailable)
+                    if (!hasError && _tcpClient.Available >= 4)
+                    {
+                        int expectedPacketSize = 0;
+                        try
                         {
-                            byte[] buffer = new byte[4096];
-                            int bytesRead = _networkStream.Read(buffer, 0, buffer.Length);
+                            byte[] sizeBytes = new byte[4];
+                            _networkStream.Read(sizeBytes, 0, 4);
+                            expectedPacketSize = BitConverter.ToInt32(sizeBytes, 0);
+                        }
+                        catch (Exception ex)
+                        {
+                            ConsoleBase.WriteError($"Read size error: {ex.Message}");
+                            hasError = true;
+                        }
 
-                            if (bytesRead > 0)
+                        if (!hasError && expectedPacketSize > 0 && expectedPacketSize <= 1048576)
+                        {
+                            float startTime = Time.time;
+                            while (_tcpClient.Available < expectedPacketSize && _isConnected)
                             {
-                                ProcessPacket(buffer, bytesRead);
+                                if (Time.time - startTime > 5f) break;
+                                yield return null;
+                            }
+
+                            if (_tcpClient.Available >= expectedPacketSize)
+                            {
+                                byte[] packetBuffer = new byte[expectedPacketSize];
+                                try
+                                {
+                                    int totalRead = 0;
+                                    while (totalRead < expectedPacketSize)
+                                    {
+                                        int read = _networkStream.Read(packetBuffer, totalRead, expectedPacketSize - totalRead);
+                                        totalRead += read;
+                                    }
+                                    ProcessPacket(packetBuffer, totalRead);
+                                }
+                                catch (Exception ex)
+                                {
+                                    ConsoleBase.WriteError($"Process packet error: {ex.Message}");
+                                }
                             }
                         }
                     }
                 }
-                catch (Exception ex)
-                {
-                    ConsoleBase.WriteError($"Listen error: {ex.Message}");
-                }
+
                 yield return new WaitForSeconds(SyncInterval);
             }
-            yield break;
         }
 
         private void ProcessPacket(byte[] data, int length)
@@ -155,20 +222,37 @@ namespace WorldBuilderCoop
 
             switch (packetType)
             {
+                case Packets.AssignID:
+                    PacketRecieve.HandleAssignID(data);
+                    break;
+
                 case Packets.PlaceObject:
                     PacketRecieve.HandlePlaceObject(data, length);
                     break;
-                case Packets.RemoveObject:
+
+                case Packets.RemoveObjects:
                     PacketRecieve.HandleRemoveObject(data, length);
                     break;
-                case Packets.UpdateObject:
+
+                case Packets.UpdateObjects:
                     PacketRecieve.HandleUpdateObject(data, length);
                     break;
+
                 case Packets.LoadMap:
                     PacketRecieve.HandleLoadMap(data, length);
                     break;
+
                 case Packets.PlayerSync:
                     PacketRecieve.HandlePlayerSync(data, length);
+                    break;
+
+                case Packets.SelectObjects:
+                    break;
+
+                case Packets.DeselectObjects:
+                    break;
+                case Packets.RemovePlayer:
+                    PacketRecieve.HandleRemovePlayer(data);
                     break;
             }
         }
@@ -181,49 +265,26 @@ namespace WorldBuilderCoop
             {
                 if (_isHost)
                 {
-                    switch (distribution)
+                    foreach (var client in _connectedClients)
                     {
-                        case PacketDistribution.SendToAll:
-                            foreach (var client in _connectedClients)
+                        if (client.Client.Connected)
+                        {
+                            bool shouldSend = distribution == PacketDistribution.SendToAll ||
+                                             (distribution == PacketDistribution.SendToOthers && (userIds == null || !userIds.Contains(client.UserId))) ||
+                                             (distribution == PacketDistribution.SendToUser && userIds != null && userIds.Contains(client.UserId));
+
+                            if (shouldSend)
                             {
-                                if (client.Client.Connected)
-                                {
-                                    client.Stream.Write(packet, 0, packet.Length);
-                                    client.Stream.Flush();
-                                }
+                                client.Stream.Write(packet, 0, packet.Length);
+                                client.Stream.Flush();
                             }
-                            break;
-                        case PacketDistribution.SendToOthers:
-                            foreach (var client in _connectedClients)
-                            {
-                                if (client.Client.Connected && (userIds == null || !userIds.Contains(client.UserId)))
-                                {
-                                    client.Stream.Write(packet, 0, packet.Length);
-                                    client.Stream.Flush();
-                                }
-                            }
-                            break;
-                        case PacketDistribution.SendToUser:
-                            if (userIds != null)
-                            {
-                                foreach (var userId in userIds)
-                                {
-                                    var targetClient = _connectedClients.Find(c => c.UserId == userId);
-                                    if (targetClient != null && targetClient.Client.Connected)
-                                    {
-                                        targetClient.Stream.Write(packet, 0, packet.Length);
-                                        targetClient.Stream.Flush();
-                                    }
-                                }
-                            }
-                            break;
+                        }
                     }
                 }
                 else
                 {
-                    if (_tcpClient != null && _tcpClient.Connected)
+                    if (_tcpClient != null && _tcpClient.Connected && _networkStream != null)
                     {
-                        _networkStream = _tcpClient.GetStream();
                         _networkStream.Write(packet, 0, packet.Length);
                         _networkStream.Flush();
                     }
@@ -237,30 +298,53 @@ namespace WorldBuilderCoop
 
         // ======== EVENT PART ========
 
+        // host recieved connected client
         private void OnClientConnected(IAsyncResult result)
         {
             try
             {
                 if (result == null) return;
                 TcpClient client = _tcpListener.EndAcceptTcpClient(result);
+                int userId = UserIdManager.GetNextUserId();
+
                 var connectedClient = new ConnectedClient
                 {
-                    UserId = _userId++,
+                    UserId = userId,
                     Client = client,
                     Stream = client.GetStream(),
                     IpAddress = ((IPEndPoint)client.Client.RemoteEndPoint).Address.ToString()
                 };
                 _connectedClients.Add(connectedClient);
-                ConsoleBase.WriteLine($"Client connected: {connectedClient.IpAddress} (ID: {connectedClient.UserId})");
+
+                using (var ms = new MemoryStream())
+                {
+                    using (var writer = new BinaryWriter(ms))
+                    {
+                        writer.Write(0);
+                        writer.Write((byte)PacketDistribution.SendToUser);
+                        writer.Write((byte)Packets.AssignID);
+                        writer.Write(userId);
+
+                        byte[] packet = ms.ToArray();
+                        int dataLength = packet.Length - 4;
+                        Buffer.BlockCopy(BitConverter.GetBytes(dataLength), 0, packet, 0, 4);
+
+                        connectedClient.Stream.Write(packet, 0, packet.Length);
+                        connectedClient.Stream.Flush();
+                    }
+                }
 
                 _tcpListener.BeginAcceptTcpClient(OnClientConnected, null);
+
+                PacketSender.SendLoadMap(WorldBuilderSync.getMapsObjects(), PacketDistribution.SendToUser, new List<int>() { userId });
             }
             catch (Exception ex)
             {
-                ConsoleBase.WriteError($"Client connection error: {ex.Message}");
+                ConsoleBase.WriteError($"{ex.Message}");
             }
         }
 
+        //client just being connect
         private void OnConnectedToHost(IAsyncResult result)
         {
             try
@@ -268,17 +352,9 @@ namespace WorldBuilderCoop
                 if (result == null) return;
                 _tcpClient.EndConnect(result);
                 _isConnected = true;
-                _myUserId = UserIdManager.GetNextUserId();
+                _networkStream = _tcpClient.GetStream();
 
-                if (_myUserId == -1)
-                {
-                    ConsoleBase.WriteError("No available user IDs");
-                    return;
-                }
-
-                ConsoleBase.WriteLine($"Connected to host with ID: {_myUserId}");
-                WorldBuilderSync.addUser(_myUserId, Vector3.zero, Quaternion.identity);
-                PacketSender.SendPlayerSync(_myUserId, Vector3.zero, Quaternion.identity, PacketDistribution.SendToOthers);
+                ConsoleBase.WriteLine("Connected to host. Waiting for assignment.");
                 BlEditorManager.Instance.StartCoroutine(listenPacketLoop());
                 BlEditorManager.Instance.StartCoroutine(WorldBuilderSync.listenPlayerMovementLoop());
             }
@@ -287,6 +363,12 @@ namespace WorldBuilderCoop
                 ConsoleBase.WriteError($"Connection failed: {ex.Message}");
                 _isConnected = false;
             }
+        }
+
+        public void SetMyUserId(int id)
+        {
+            _myUserId = id;
+            ConsoleBase.WriteLine($"Local UserID set to: {_myUserId}");
         }
 
         public void Disconnect()
@@ -338,20 +420,41 @@ namespace WorldBuilderCoop
     public class NetworkObject : MonoBehaviour
     {
         public int NetworkId { get; set; }
+        public void Start()
+        {
+            NetworkObjectManager.Register(this.NetworkId, this);
+        }
     }
 
     public class UserAvatar : MonoBehaviour
     {
         public int UserId { get; set; }
+        public Vector3 position { get; set; }
+        public quaternion rotation { get; set; }
+        public int placeIndex { get; set; }
+    }
+
+    public class ObjectInfo
+    {
+        public Vector3 position;
+        public Quaternion rotation;
+        public Vector3 scale;
+        public int objectId;
+        public int prefabIndex;
+        public int placeIndex;
     }
 
     public enum Packets
     {
+        AssignID = 0,
         PlaceObject = 1,
-        RemoveObject = 2,
-        UpdateObject = 3,
+        RemoveObjects = 2,
+        UpdateObjects = 3,
         LoadMap = 4,
+        SelectObjects = 5,
         PlayerSync = 6,
+        DeselectObjects = 7,
+        RemovePlayer = 8
     }
 
     public enum PacketDistribution
@@ -359,5 +462,32 @@ namespace WorldBuilderCoop
         SendToAll = 1,
         SendToOthers = 2,
         SendToUser = 3,
+    }
+
+    public static class NetworkObjectManager
+    {
+        private static Dictionary<int, NetworkObject> _cachedObjects = new Dictionary<int, NetworkObject>();
+
+        public static void Register(int id, NetworkObject obj)
+        {
+            if (!_cachedObjects.ContainsKey(id)) _cachedObjects.Add(id, obj);
+        }
+
+        public static void Unregister(int id)
+        {
+            if (_cachedObjects.ContainsKey(id)) _cachedObjects.Remove(id);
+        }
+
+        public static NetworkObject GetNetworkObject(int id)
+        {
+            if (_cachedObjects.TryGetValue(id, out NetworkObject obj))
+            {
+                if (obj != null) return obj;
+                _cachedObjects.Remove(id);
+            }
+            return null;
+        }
+
+        public static void Clear() => _cachedObjects.Clear();
     }
 }

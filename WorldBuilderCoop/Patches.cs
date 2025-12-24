@@ -45,15 +45,21 @@ namespace WorldBuilderCoop
         [HarmonyPatch(typeof(BlEditorManager), "UpdateHandleMove")]
         public class BlEditorManagerUpdateHandleMove_Patch
         {
+            private static float _lastSendTime;
+            private const float SEND_RATE = 0.1f;
+
             public static void Postfix(BlEditorManager __instance)
             {
                 if (__instance == null || __instance.selectedTransforms == null || __instance.selectedTransforms.Count == 0)
                     return;
 
+                if (Time.time - _lastSendTime < SEND_RATE) return;
+
                 List<int> objectIds = new List<int>();
                 Vector3 position = Vector3.zero;
                 Quaternion rotation = Quaternion.identity;
                 Vector3 scale = Vector3.one;
+                bool hasValidObject = false;
 
                 for (int i = 0; i < __instance.selectedTransforms.Count; i++)
                 {
@@ -63,6 +69,7 @@ namespace WorldBuilderCoop
                     if (networkObject != null)
                     {
                         objectIds.Add(networkObject.NetworkId);
+                        hasValidObject = true;
 
                         if (i == 0)
                         {
@@ -73,8 +80,9 @@ namespace WorldBuilderCoop
                     }
                 }
 
-                if (objectIds.Count > 0)
+                if (hasValidObject && objectIds.Count > 0)
                 {
+                    _lastSendTime = Time.time;
                     PacketSender.SendUpdateObject(objectIds, position, rotation, scale, PacketDistribution.SendToOthers);
                 }
             }
@@ -157,6 +165,22 @@ namespace WorldBuilderCoop
                 }
 
                 return false;
+            }
+        }
+
+
+        [HarmonyPatch(typeof(BrokeProtocol.Client.Builder.BlEditorManager), "LoadMap")]
+        public class BlEditorManagerLoadMap_Patch
+        {
+            public static void Postfix(BrokeProtocol.Client.UI.BlPrefabItemButton __instance)
+            {
+                if (Core.Network.IsConnected)
+                {
+                    if (Core.Network.IsHost)
+                        PacketSender.SendLoadMap(WorldBuilderSync.getMapsObjects());
+                    else
+                        Core.Network.Disconnect();
+                }
             }
         }
     }

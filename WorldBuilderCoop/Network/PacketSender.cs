@@ -1,149 +1,223 @@
-﻿using ModLoader;
+﻿using BrokeProtocol.Client.Builder;
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 
 namespace WorldBuilderCoop.Network
 {
     internal class PacketSender
     {
+        public const int TargetFPS = 30;
+        public const float SyncIntervalLoadMap = 1f / TargetFPS;
+
         public static void SendPlaceObject(Vector3 position, Quaternion rotation, Vector3 scale, int objectId, string prefabName, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
         {
-            byte[] prefabNameBytes = System.Text.Encoding.UTF8.GetBytes(prefabName);
-            byte[] packet = new byte[2 + 12 + 16 + 12 + 4 + 4 + prefabNameBytes.Length];
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write(0);
+                    writer.Write((byte)distribution);
+                    writer.Write((byte)Packets.PlaceObject);
+                    writer.Write(position.x);
+                    writer.Write(position.y);
+                    writer.Write(position.z);
+                    writer.Write(rotation.x);
+                    writer.Write(rotation.y);
+                    writer.Write(rotation.z);
+                    writer.Write(rotation.w);
+                    writer.Write(scale.x);
+                    writer.Write(scale.y);
+                    writer.Write(scale.z);
+                    writer.Write(objectId);
+                    writer.Write(prefabName);
 
-            packet[0] = (byte)distribution;
-            packet[1] = (byte)Packets.PlaceObject;
-
-            int offset = 2;
-            Buffer.BlockCopy(BitConverter.GetBytes(position.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.z), 0, packet, offset + 8, 4);
-            offset += 12;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.z), 0, packet, offset + 8, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.w), 0, packet, offset + 12, 4);
-            offset += 16;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(scale.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(scale.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(scale.z), 0, packet, offset + 8, 4);
-            offset += 12;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(objectId), 0, packet, offset, 4);
-            offset += 4;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(prefabNameBytes.Length), 0, packet, offset, 4);
-            offset += 4;
-
-            Buffer.BlockCopy(prefabNameBytes, 0, packet, offset, prefabNameBytes.Length);
-
-            Core.Network.SendPacket(packet, distribution, userIds);
+                    byte[] packet = ms.ToArray();
+                    int dataLength = packet.Length - 4;
+                    Buffer.BlockCopy(BitConverter.GetBytes(dataLength), 0, packet, 0, 4);
+                    Core.Network.SendPacket(packet, distribution, userIds);
+                }
+            }
         }
 
         public static void SendRemoveObject(List<int> objectIds, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
         {
-            byte[] packet = new byte[2 + 4 + (objectIds.Count * 4)];
-            packet[0] = (byte)distribution;
-            packet[1] = (byte)Packets.RemoveObject;
-
-            int offset = 2;
-            Buffer.BlockCopy(BitConverter.GetBytes(objectIds.Count), 0, packet, offset, 4);
-            offset += 4;
-
-            foreach (var objectId in objectIds)
+            using (var ms = new MemoryStream())
             {
-                Buffer.BlockCopy(BitConverter.GetBytes(objectId), 0, packet, offset, 4);
-                offset += 4;
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write(0);
+                    writer.Write((byte)distribution);
+                    writer.Write((byte)Packets.RemoveObjects);
+                    writer.Write(objectIds.Count);
+
+                    foreach (var objectId in objectIds)
+                    {
+                        writer.Write(objectId);
+                    }
+
+                    byte[] packet = ms.ToArray();
+                    int dataLength = packet.Length - 4;
+                    Buffer.BlockCopy(BitConverter.GetBytes(dataLength), 0, packet, 0, 4);
+                    Core.Network.SendPacket(packet, distribution, userIds);
+                }
             }
-            ConsoleBase.WriteLine("Packet send " + objectIds.Count);
-            Core.Network.SendPacket(packet, distribution, userIds);
         }
 
         public static void SendUpdateObject(List<int> objectIds, Vector3 position, Quaternion rotation, Vector3 scale, PacketDistribution distribution = PacketDistribution.SendToAll, byte[] componentData = null, List<int> userIds = null)
         {
-            int objectIdsCount = objectIds != null ? objectIds.Count : 0;
-            int componentDataLength = componentData != null ? componentData.Length : 0;
-
-            int totalSize = 2 + 4 + (objectIdsCount * 4) + 12 + 16 + 12 + 4 + componentDataLength;
-            byte[] packet = new byte[totalSize];
-
-            int offset = 0;
-
-            packet[offset++] = (byte)distribution;
-            packet[offset++] = (byte)Packets.UpdateObject;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(objectIdsCount), 0, packet, offset, 4);
-            offset += 4;
-
-            if (objectIdsCount > 0)
+            using (var ms = new MemoryStream())
             {
-                foreach (int id in objectIds)
+                using (var writer = new BinaryWriter(ms))
                 {
-                    Buffer.BlockCopy(BitConverter.GetBytes(id), 0, packet, offset, 4);
-                    offset += 4;
+                    writer.Write(0);
+
+                    writer.Write((byte)distribution);
+                    writer.Write((byte)Packets.UpdateObjects);
+
+                    if (objectIds != null)
+                    {
+                        writer.Write(objectIds.Count);
+                        foreach (int id in objectIds)
+                        {
+                            writer.Write(id);
+                        }
+                    }
+                    else
+                    {
+                        writer.Write(0);
+                    }
+
+                    writer.Write(position.x);
+                    writer.Write(position.y);
+                    writer.Write(position.z);
+
+                    writer.Write(rotation.x);
+                    writer.Write(rotation.y);
+                    writer.Write(rotation.z);
+                    writer.Write(rotation.w);
+
+                    writer.Write(scale.x);
+                    writer.Write(scale.y);
+                    writer.Write(scale.z);
+
+                    if (componentData != null && componentData.Length > 0)
+                    {
+                        writer.Write(componentData.Length);
+                        writer.Write(componentData);
+                    }
+                    else
+                    {
+                        writer.Write(0);
+                    }
+
+                    byte[] packet = ms.ToArray();
+                    int dataLength = packet.Length - 4;
+                    Buffer.BlockCopy(BitConverter.GetBytes(dataLength), 0, packet, 0, 4);
+
+                    Core.Network.SendPacket(packet, distribution, userIds);
                 }
             }
-
-            Buffer.BlockCopy(BitConverter.GetBytes(position.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.z), 0, packet, offset + 8, 4);
-            offset += 12;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.z), 0, packet, offset + 8, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.w), 0, packet, offset + 12, 4);
-            offset += 16;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(scale.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(scale.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(scale.z), 0, packet, offset + 8, 4);
-            offset += 12;
-
-            Buffer.BlockCopy(BitConverter.GetBytes(componentDataLength), 0, packet, offset, 4);
-            offset += 4;
-
-            if (componentDataLength > 0)
-            {
-                Buffer.BlockCopy(componentData, 0, packet, offset, componentDataLength);
-            }
-
-            Core.Network.SendPacket(packet, distribution, userIds);
         }
 
-        public static void SendLoadMap(string mapName, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
+        public static void SendLoadMap(List<ObjectInfo> objects, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
         {
-            byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(mapName);
-            byte[] packet = new byte[2 + 4 + nameBytes.Length];
-            packet[0] = (byte)distribution;
-            packet[1] = (byte)Packets.LoadMap;
-            Buffer.BlockCopy(BitConverter.GetBytes(nameBytes.Length), 0, packet, 2, 4);
-            Buffer.BlockCopy(nameBytes, 0, packet, 6, nameBytes.Length);
-            Core.Network.SendPacket(packet, distribution, userIds);
+            BlEditorManager.Instance.StartCoroutine(loadMapByChuncks(objects, distribution, userIds));
+        }
+
+        private static IEnumerator loadMapByChuncks(List<ObjectInfo> objects, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
+        {
+            int chunkSize = 30;
+            int totalObjects = objects.Count;
+
+            for (int i = 0; i < totalObjects; i += chunkSize)
+            {
+                List<ObjectInfo> currentChunk = objects.GetRange(i, Math.Min(chunkSize, totalObjects - i));
+                bool isFirstChunk = (i == 0);
+                bool isLastChunk = (i + chunkSize >= totalObjects);
+
+                using (var ms = new MemoryStream())
+                {
+                    using (var writer = new BinaryWriter(ms))
+                    {
+                        writer.Write(0);
+                        writer.Write((byte)distribution);
+                        writer.Write((byte)Packets.LoadMap);
+                        writer.Write(currentChunk.Count);
+                        writer.Write(isFirstChunk);
+                        writer.Write(totalObjects);
+                        writer.Write(isLastChunk);
+
+                        foreach (var obj in currentChunk)
+                        {
+                            writer.Write(obj.objectId);
+                            writer.Write(obj.position.x); writer.Write(obj.position.y); writer.Write(obj.position.z);
+                            writer.Write(obj.rotation.x); writer.Write(obj.rotation.y); writer.Write(obj.rotation.z); writer.Write(obj.rotation.w);
+                            writer.Write(obj.scale.x); writer.Write(obj.scale.y); writer.Write(obj.scale.z);
+                            writer.Write(obj.prefabIndex);
+                            writer.Write(obj.placeIndex);
+                        }
+
+                        byte[] packet = ms.ToArray();
+                        int dataLength = packet.Length - 4;
+                        Buffer.BlockCopy(BitConverter.GetBytes(dataLength), 0, packet, 0, 4);
+                        Core.Network.SendPacket(packet, distribution, userIds);
+                    }
+                }
+
+                if (i + chunkSize < totalObjects)
+                {
+                    yield return new WaitForSeconds(0.2f);
+                }
+            }
         }
 
         public static void SendPlayerSync(int userId, Vector3 position, Quaternion rotation, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
         {
-            byte[] packet = new byte[2 + 4 + 12 + 16];
-            packet[0] = (byte)distribution;
-            packet[1] = (byte)Packets.PlayerSync;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write(0);
+                    writer.Write((byte)distribution);
+                    writer.Write((byte)Packets.PlayerSync);
+                    writer.Write(userId);
+                    writer.Write(position.x);
+                    writer.Write(position.y);
+                    writer.Write(position.z);
+                    writer.Write(rotation.x);
+                    writer.Write(rotation.y);
+                    writer.Write(rotation.z);
+                    writer.Write(rotation.w);
 
-            int offset = 2;
-            Buffer.BlockCopy(BitConverter.GetBytes(userId), 0, packet, offset, 4);
-            offset += 4;
-            Buffer.BlockCopy(BitConverter.GetBytes(position.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(position.z), 0, packet, offset + 8, 4);
-            offset += 12;
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.x), 0, packet, offset, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.y), 0, packet, offset + 4, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.z), 0, packet, offset + 8, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(rotation.w), 0, packet, offset + 12, 4);
+                    byte[] packet = ms.ToArray();
+                    int dataLength = packet.Length - 4;
+                    Buffer.BlockCopy(BitConverter.GetBytes(dataLength), 0, packet, 0, 4);
 
-            Core.Network.SendPacket(packet, distribution, userIds);
+                    Core.Network.SendPacket(packet, distribution, userIds);
+                }
+            }
+        }
+
+        public static void SendRemovePlayer(int userId, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write(0);
+                    writer.Write((byte)distribution);
+                    writer.Write((byte)Packets.RemovePlayer);
+                    writer.Write(userId);
+
+                    byte[] packet = ms.ToArray();
+                    int dataLength = packet.Length - 4;
+                    Buffer.BlockCopy(BitConverter.GetBytes(dataLength), 0, packet, 0, 4);
+                    Core.Network.SendPacket(packet, distribution, userIds);
+                }
+            }
         }
     }
 }
