@@ -41,6 +41,45 @@ namespace WorldBuilderCoop
             }
         }
 
+
+        [HarmonyPatch(typeof(BlEditorManager), "UpdateHandleMove")]
+        public class BlEditorManagerUpdateHandleMove_Patch
+        {
+            public static void Postfix(BlEditorManager __instance)
+            {
+                if (__instance == null || __instance.selectedTransforms == null || __instance.selectedTransforms.Count == 0)
+                    return;
+
+                List<int> objectIds = new List<int>();
+                Vector3 position = Vector3.zero;
+                Quaternion rotation = Quaternion.identity;
+                Vector3 scale = Vector3.one;
+
+                for (int i = 0; i < __instance.selectedTransforms.Count; i++)
+                {
+                    Transform transform = __instance.selectedTransforms[i];
+                    NetworkObject networkObject = transform.GetComponent<NetworkObject>();
+
+                    if (networkObject != null)
+                    {
+                        objectIds.Add(networkObject.NetworkId);
+
+                        if (i == 0)
+                        {
+                            position = transform.position;
+                            rotation = transform.rotation;
+                            scale = transform.localScale;
+                        }
+                    }
+                }
+
+                if (objectIds.Count > 0)
+                {
+                    PacketSender.SendUpdateObject(objectIds, position, rotation, scale, PacketDistribution.SendToOthers);
+                }
+            }
+        }
+
         [HarmonyPatch(typeof(BrokeProtocol.Client.Builder.BlEditorManager), "DeleteSelection")]
         public class BlEditorManagerDeleteSelection_Patch
         {

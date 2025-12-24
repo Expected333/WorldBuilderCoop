@@ -11,6 +11,9 @@ namespace WorldBuilderCoop
 {
     public class NetworkHandler
     {
+        public const int TargetFPS = 30;
+        public const float SyncInterval = 1f / TargetFPS;
+
         private TcpListener _tcpListener;
         private TcpClient _tcpClient;
         private NetworkStream _networkStream;
@@ -138,7 +141,7 @@ namespace WorldBuilderCoop
                 {
                     ConsoleBase.WriteError($"Listen error: {ex.Message}");
                 }
-                yield return new WaitForSeconds(0.01f);
+                yield return new WaitForSeconds(SyncInterval);
             }
             yield break;
         }

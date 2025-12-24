@@ -2,6 +2,7 @@
 using BrokeProtocol.Managers;
 using BrokeProtocol.Utility;
 using BrokeProtocol.Utility.ResourceDB;
+using LiteDB;
 using ModLoader;
 using System;
 using System.Collections;
@@ -72,12 +73,39 @@ namespace WorldBuilderCoop
             }
         }
 
-        public static void updateObject(int objectId, Vector3 position, Quaternion rotation, Vector3 scale, byte[] componentData)
+        public static void updateObject(List<int> objectIds, Vector3 position, Quaternion rotation, Vector3 scale, byte[] componentData)
         {
+            if (objectIds == null || objectIds.Count == 0)
+            {
+                return;
+            }
+
+            NetworkObject[] networkObjects = UnityEngine.Object.FindObjectsByType<NetworkObject>(FindObjectsSortMode.None);
+            foreach (var networkObject in networkObjects)
+            {
+                if (objectIds.Contains(networkObject.NetworkId) && networkObject.GetComponent<UserAvatar>() == null)
+                {
+                    if (BlEditorManager.Instance.selectedTransforms.Contains(networkObject.transform))
+                        BlEditorManager.Instance.selectedTransforms.Remove(networkObject.transform);
+
+                    var interpolator = networkObject.GetComponent<GameObjectInterpolator>();
+                    if (interpolator == null)
+                    {
+                        interpolator = networkObject.gameObject.AddComponent<GameObjectInterpolator>();
+                    }
+                    interpolator.SetTarget(position, rotation, scale);
+
+                    if (componentData != null && componentData.Length > 0)
+                    {
+                        // manage additonnal data
+                    }
+                }
+            }
         }
 
         public static void loadMap(string mapName)
         {
+
         }
 
         public static void userSync(int userId, Vector3 position, Quaternion rotation)
@@ -207,6 +235,37 @@ namespace WorldBuilderCoop
 
             transform.position = currentPosition;
             transform.rotation = currentRotation;
+        }
+    }
+
+    public class GameObjectInterpolator : MonoBehaviour
+    {
+        private Vector3 targetPosition;
+        private Quaternion targetRotation;
+        private Vector3 targetScale;
+
+        private Vector3 currentPosition;
+        private Quaternion currentRotation;
+        private Vector3 currentScale;
+
+        private float interpolationSpeed = 10f;
+
+        public void SetTarget(Vector3 newPosition, Quaternion newRotation, Vector3 newScale)
+        {
+            targetPosition = newPosition;
+            targetRotation = newRotation;
+            targetScale = newScale;
+        }
+
+        public void Update()
+        {
+            currentPosition = Vector3.Lerp(transform.position, targetPosition, Time.deltaTime * interpolationSpeed);
+            currentRotation = Quaternion.Lerp(transform.rotation, targetRotation, Time.deltaTime * interpolationSpeed);
+            currentScale = Vector3.Lerp(transform.localScale, targetScale, Time.deltaTime * interpolationSpeed);
+
+            transform.position = currentPosition;
+            transform.rotation = currentRotation;
+            transform.localScale = currentScale;
         }
     }
 }

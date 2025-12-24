@@ -63,8 +63,16 @@ namespace WorldBuilderCoop.Network
         public static void HandleUpdateObject(byte[] data, int length)
         {
             int offset = 2;
-            int objectId = BitConverter.ToInt32(data, offset);
+
+            int objectIdsCount = BitConverter.ToInt32(data, offset);
             offset += 4;
+
+            List<int> objectIds = new List<int>(objectIdsCount);
+            for (int i = 0; i < objectIdsCount; i++)
+            {
+                objectIds.Add(BitConverter.ToInt32(data, offset));
+                offset += 4;
+            }
 
             Vector3 position = new Vector3(
                 BitConverter.ToSingle(data, offset),
@@ -97,7 +105,7 @@ namespace WorldBuilderCoop.Network
                 Buffer.BlockCopy(data, offset, componentData, 0, componentDataLength);
             }
 
-            WorldBuilderSync.updateObject(objectId, position, rotation, scale, componentData);
+            WorldBuilderSync.updateObject(objectIds, position, rotation, scale, componentData);
         }
 
         public static void HandleLoadMap(byte[] data, int length)

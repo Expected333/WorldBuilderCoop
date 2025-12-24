@@ -62,17 +62,30 @@ namespace WorldBuilderCoop.Network
             Core.Network.SendPacket(packet, distribution, userIds);
         }
 
-        public static void SendUpdateObject(int objectId, Vector3 position, Quaternion rotation, Vector3 scale, PacketDistribution distribution = PacketDistribution.SendToAll, byte[] componentData = null, List<int> userIds = null)
+        public static void SendUpdateObject(List<int> objectIds, Vector3 position, Quaternion rotation, Vector3 scale, PacketDistribution distribution = PacketDistribution.SendToAll, byte[] componentData = null, List<int> userIds = null)
         {
+            int objectIdsCount = objectIds != null ? objectIds.Count : 0;
             int componentDataLength = componentData != null ? componentData.Length : 0;
-            byte[] packet = new byte[2 + 4 + 12 + 16 + 12 + 4 + componentDataLength];
+
+            int totalSize = 2 + 4 + (objectIdsCount * 4) + 12 + 16 + 12 + 4 + componentDataLength;
+            byte[] packet = new byte[totalSize];
 
             int offset = 0;
+
             packet[offset++] = (byte)distribution;
             packet[offset++] = (byte)Packets.UpdateObject;
 
-            Buffer.BlockCopy(BitConverter.GetBytes(objectId), 0, packet, offset, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(objectIdsCount), 0, packet, offset, 4);
             offset += 4;
+
+            if (objectIdsCount > 0)
+            {
+                foreach (int id in objectIds)
+                {
+                    Buffer.BlockCopy(BitConverter.GetBytes(id), 0, packet, offset, 4);
+                    offset += 4;
+                }
+            }
 
             Buffer.BlockCopy(BitConverter.GetBytes(position.x), 0, packet, offset, 4);
             Buffer.BlockCopy(BitConverter.GetBytes(position.y), 0, packet, offset + 4, 4);
