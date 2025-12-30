@@ -122,6 +122,33 @@ namespace WorldBuilderCoop.Network
             }
         }
 
+        public static void SendPlayerSync(int userId, Vector3 position, Quaternion rotation, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write(0);
+                    writer.Write((byte)distribution);
+                    writer.Write((byte)Packets.PlayerSync);
+                    writer.Write(userId);
+                    writer.Write(position.x);
+                    writer.Write(position.y);
+                    writer.Write(position.z);
+                    writer.Write(rotation.x);
+                    writer.Write(rotation.y);
+                    writer.Write(rotation.z);
+                    writer.Write(rotation.w);
+
+                    byte[] packet = ms.ToArray();
+                    int dataLength = packet.Length - 4;
+                    Buffer.BlockCopy(BitConverter.GetBytes(dataLength), 0, packet, 0, 4);
+
+                    Core.Network.SendPacket(packet, distribution, userIds);
+                }
+            }
+        }
+
         public static void SendLoadMap(List<ObjectInfo> objects, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
         {
             BlEditorManager.Instance.StartCoroutine(loadMapByChuncks(objects, distribution, userIds));
@@ -174,33 +201,6 @@ namespace WorldBuilderCoop.Network
             }
         }
 
-        public static void SendPlayerSync(int userId, Vector3 position, Quaternion rotation, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
-        {
-            using (var ms = new MemoryStream())
-            {
-                using (var writer = new BinaryWriter(ms))
-                {
-                    writer.Write(0);
-                    writer.Write((byte)distribution);
-                    writer.Write((byte)Packets.PlayerSync);
-                    writer.Write(userId);
-                    writer.Write(position.x);
-                    writer.Write(position.y);
-                    writer.Write(position.z);
-                    writer.Write(rotation.x);
-                    writer.Write(rotation.y);
-                    writer.Write(rotation.z);
-                    writer.Write(rotation.w);
-
-                    byte[] packet = ms.ToArray();
-                    int dataLength = packet.Length - 4;
-                    Buffer.BlockCopy(BitConverter.GetBytes(dataLength), 0, packet, 0, 4);
-
-                    Core.Network.SendPacket(packet, distribution, userIds);
-                }
-            }
-        }
-
         public static void SendRemovePlayer(int userId, PacketDistribution distribution = PacketDistribution.SendToAll, List<int> userIds = null)
         {
             using (var ms = new MemoryStream())
@@ -216,6 +216,46 @@ namespace WorldBuilderCoop.Network
                     int dataLength = packet.Length - 4;
                     Buffer.BlockCopy(BitConverter.GetBytes(dataLength), 0, packet, 0, 4);
                     Core.Network.SendPacket(packet, distribution, userIds);
+                }
+            }
+        }
+
+        public static void SendAddToSelection(int userId, int objectId, PacketDistribution distribution = PacketDistribution.SendToOthers)
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write(0);
+                    writer.Write((byte)distribution);
+                    writer.Write((byte)Packets.AddToSelection);
+                    writer.Write(userId);
+                    writer.Write(objectId);
+
+                    byte[] packet = ms.ToArray();
+                    int dataLength = packet.Length - 4;
+                    Buffer.BlockCopy(BitConverter.GetBytes(dataLength), 0, packet, 0, 4);
+                    Core.Network.SendPacket(packet, distribution);
+                }
+            }
+        }
+
+        public static void SendRemoveToSelection(int userId, int objectId, PacketDistribution distribution = PacketDistribution.SendToOthers)
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write(0);
+                    writer.Write((byte)distribution);
+                    writer.Write((byte)Packets.RemoveFromSelection);
+                    writer.Write(userId);
+                    writer.Write(objectId);
+
+                    byte[] packet = ms.ToArray();
+                    int dataLength = packet.Length - 4;
+                    Buffer.BlockCopy(BitConverter.GetBytes(dataLength), 0, packet, 0, 4);
+                    Core.Network.SendPacket(packet, distribution);
                 }
             }
         }

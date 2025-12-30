@@ -33,14 +33,24 @@
   <ItemGroup>
     <Compile Include="Behavior\AvatarTextDisplay.cs" />
     <Compile Include="Behavior\BoundingHighlightManager.cs" />
-    <Compile Include="Network\UserIdManager.cs" />
+    <Compile Include="Events\WorldBuilderEventManager.cs" />
+    <Compile Include="Network\Models\ConnectedClient.cs" />
+    <Compile Include="Network\Models\NetworkEnums.cs" />
+    <Compile Include="Network\Models\NetworkObject.cs" />
+    <Compile Include="Network\Models\ObjectInfo.cs" />
+    <Compile Include="Network\Models\UserAvatar.cs" />
+    <Compile Include="Network\NetworkClient.cs" />
+    <Compile Include="Network\NetworkConfig.cs" />
+    <Compile Include="Network\NetworkObjectManager.cs" />
+    <Compile Include="Network\NetworkServer.cs" />
+    <Compile Include="Network\Models\UserIdManager.cs" />
     <Compile Include="UI\ConnectedUI.cs" />
     <Compile Include="UI\ConnectUI.cs" />
     <Compile Include="UI\MainUI.cs" />
     <Compile Include="UI\Styles.cs" />
     <Compile Include="Core.cs" />
     <Compile Include="Network\NetworkHandler.cs" />
-    <Compile Include="Network\PacketRecieve.cs" />
+    <Compile Include="Network\PacketListener.cs" />
     <Compile Include="Network\PacketSender.cs" />
     <Compile Include="Patches.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

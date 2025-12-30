@@ -1,10 +1,15 @@
 ﻿using ModLoader;
+using WorldBuilderCoop.Events;
+using WorldBuilderCoop.Network;
 
 namespace WorldBuilderCoop
 {
     public class Core : ModBase
     {
         public static NetworkHandler Network { get; private set; }
+        public static NetworkObjectManager networkObjectManager { get; private set; }
+        public static WorldBuilderEventManager EventManager { get; private set; }
+        public static NetworkSyncHandler NetworkSync { get; private set; }
 
         public override string ModName => "WorldBuilderCoop";
         public override string ModVersion => "1.0.0";
@@ -18,7 +23,12 @@ namespace WorldBuilderCoop
             Logger.Info("  Author: Zefire");
             Logger.Info("===================================");
             Logger.Info("Loading system ...");
+
             Network = new NetworkHandler();
+            networkObjectManager = new NetworkObjectManager();
+            EventManager = WorldBuilderEventManager.Instance;
+            NetworkSync = new NetworkSyncHandler(Network);
+
             PatchAll();
         }
     }

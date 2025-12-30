@@ -1,11 +1,82 @@
-﻿using System.Collections.Generic;
+﻿using ModLoader;
+using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.IO;
+using System.Net.Sockets;
 using UnityEngine;
 
 namespace WorldBuilderCoop.Network
 {
-    internal class PacketRecieve
+    public class PacketListener
     {
+        private readonly TcpClient _tcpClient;
+        private NetworkStream _networkStream;
+        private byte[] _sizeBuffer = new byte[4];
+        private bool _isConnected;
+        private Action<byte[], int> _onPacketReceived;
+
+        public PacketListener(TcpClient tcpClient, bool isConnected, Action<byte[], int> onPacketReceived)
+        {
+            _tcpClient = tcpClient;
+            _isConnected = isConnected;
+            _onPacketReceived = onPacketReceived;
+        }
+
+        public IEnumerator ListenPacketLoop()
+        {
+            yield return new WaitForSeconds(0.5f);
+
+            while (_isConnected)
+            {
+                if (_tcpClient?.Connected == true && EnsureStream() && _tcpClient.Available >= NetworkConfig.HeaderSize)
+                {
+                    if (TryReadInt32(_networkStream) is int size && size > 0 && size <= NetworkConfig.MaxPacketSize)
+                    {
+                        if (WaitForData(size) && TryReadBuffer(_networkStream, size) is byte[] packet)
+                            _onPacketReceived?.Invoke(packet, packet.Length);
+                    }
+                }
+                yield return new WaitForSeconds(NetworkConfig.SyncInterval);
+            }
+        }
+
+        private bool EnsureStream()
+        {
+            try
+            {
+                if (_networkStream == null)
+                    _networkStream = _tcpClient.GetStream();
+                return _networkStream != null;
+            }
+            catch { return false; }
+        }
+
+        private int? TryReadInt32(NetworkStream stream)
+        {
+            try { stream.Read(_sizeBuffer, 0, 4); return BitConverter.ToInt32(_sizeBuffer, 0); }
+            catch (Exception ex) { ConsoleBase.WriteError($"Read error: {ex.Message}"); return null; }
+        }
+
+        private byte[] TryReadBuffer(NetworkStream stream, int size)
+        {
+            byte[] buffer = new byte[size];
+            try
+            {
+                int read = 0;
+                while (read < size && (read += stream.Read(buffer, read, size - read)) > 0) ;
+                return read == size ? buffer : null;
+            }
+            catch (Exception ex) { ConsoleBase.WriteError($"Packet error: {ex.Message}"); return null; }
+        }
+
+        private bool WaitForData(int size)
+        {
+            float start = Time.time;
+            while (_tcpClient.Available < size && _isConnected && Time.time - start < NetworkConfig.PacketTimeout) { }
+            return _tcpClient.Available >= size;
+        }
+
         public static void HandleAssignID(byte[] data)
         {
             using (var ms = new MemoryStream(data))
@@ -176,6 +247,36 @@ namespace WorldBuilderCoop.Network
                     int userIdToRemove = reader.ReadInt32();
 
                     WorldBuilderSync.removeUser(userIdToRemove);
+                }
+            }
+        }
+
+        public static void HandleAddToSelection(byte[] data, int length)
+        {
+            using (var ms = new MemoryStream(data))
+            {
+                using (var reader = new BinaryReader(ms))
+                {
+                    var distribution = reader.ReadByte();
+                    var packetType = reader.ReadByte();
+                    int userId = reader.ReadInt32();
+                    int objectId = reader.ReadInt32();
+                    WorldBuilderSync.AddToSelection(userId, objectId);
+                }
+            }
+        }
+
+        public static void HandleRemoveFromSelection(byte[] data, int length)
+        {
+            using (var ms = new MemoryStream(data))
+            {
+                using (var reader = new BinaryReader(ms))
+                {
+                    var distribution = reader.ReadByte();
+                    var packetType = reader.ReadByte();
+                    int userId = reader.ReadInt32();
+                    int objectId = reader.ReadInt32();
+                    WorldBuilderSync.RemoveFromSelection(userId, objectId);
                 }
             }
         }

@@ -1,6 +1,7 @@
 ﻿using BrokeProtocol.Client.Builder;
 using BrokeProtocol.Managers;
 using BrokeProtocol.Utility;
+using BrokeProtocol.Utility.ResourceDB;
 using HarmonyLib;
 using ModLoader;
 using System.Collections.Generic;
@@ -17,7 +18,6 @@ namespace WorldBuilderCoop
         {
             public static void Postfix(BlEditorManager __instance)
             {
-                // bcs i got some shit, need to delay
                 if (__instance != null)
                 {
                     ConsoleBase.WriteLine(__instance);
@@ -27,8 +27,14 @@ namespace WorldBuilderCoop
 
             private static System.Collections.IEnumerator ApplyBuilderThemeDelayed(BlEditorManager instance)
             {
-                // Wait one frame
                 yield return new WaitForFixedUpdate();
+
+                ConsoleBase.WriteLine("[WorldBuilder] WB_Patch delayed applied");
+                yield return new WaitForSeconds(3f);
+                foreach (var obj in ResourceDB.Instance.GetAllAssets(""))
+                {
+                    ConsoleBase.WriteLine(" id de l'obj " + obj.name.GetPrefabIndex() + " = ");
+                }
 
                 try
                 {
@@ -36,24 +42,68 @@ namespace WorldBuilderCoop
                 }
                 catch (System.Exception ex)
                 {
-                    ConsoleBase.WriteLine($"[WorldBuilder] WB_Patch delayed error: {ex.Message}");
+                    ConsoleBase.WriteLine("[WorldBuilder] WB_Patch delayed error: " + ex.Message);
                 }
             }
         }
 
+        [HarmonyPatch(typeof(BlEditorManager), "AddToSelection")]
+        public class BlEditorManagerAddToSelection_Patch
+        {
+            public static bool Prefix(BlEditorManager __instance, Transform t)
+            {
+                if (t == null) return false;
+
+                var networkObj = t.GetComponent<NetworkObject>();
+                if (networkObj != null)
+                {
+                    if (WorldBuilderSync.blacklistSelection.Contains(networkObj.NetworkId))
+                        return false;
+
+                    int userId = Core.Network.MyUserId;
+                    Core.networkObjectManager.MarkAsSelectedByUser(userId, networkObj.NetworkId);
+
+                    Core.EventManager.RaiseSelectionChanged(userId, networkObj.NetworkId, true);
+                }
+                return true;
+            }
+        }
+
+        [HarmonyPatch(typeof(BlEditorManager), "RemoveFromSelection")]
+        public class BlEditorManagerRemoveFromSelection_Patch
+        {
+            public static void Postfix(BlEditorManager __instance, Transform t)
+            {
+                if (t == null) return;
+                var networkObj = t.GetComponent<NetworkObject>();
+                if (networkObj != null)
+                {
+                    int userId = Core.Network.MyUserId;
+                    Core.networkObjectManager.UnmarkAsSelectedByUser(userId, networkObj.NetworkId);
+                    Core.EventManager.RaiseSelectionChanged(userId, networkObj.NetworkId, false);
+                }
+            }
+        }
 
         [HarmonyPatch(typeof(BlEditorManager), "UpdateHandleMove")]
-        public class BlEditorManagerUpdateHandleMove_Patch
+        public class BlEditorManagerUpdateHandleMove_Patch2
         {
             private static float _lastSendTime;
-            private const float SEND_RATE = 0.1f;
+            private const int TARGET_FPS = 20;
+            private static float sendInterval => 1.0f / TARGET_FPS;
+            private static Vector3 _lastPosition = Vector3.zero;
+            private static Quaternion _lastRotation = Quaternion.identity;
+            private static Vector3 _lastScale = Vector3.one;
+            private const float POSITION_THRESHOLD = 0.01f;
+            private const float ROTATION_THRESHOLD = 0.5f;
+            private const float SCALE_THRESHOLD = 0.001f;
 
             public static void Postfix(BlEditorManager __instance)
             {
                 if (__instance == null || __instance.selectedTransforms == null || __instance.selectedTransforms.Count == 0)
                     return;
 
-                if (Time.time - _lastSendTime < SEND_RATE) return;
+                if (Time.time - _lastSendTime < sendInterval) return;
 
                 List<int> objectIds = new List<int>();
                 Vector3 position = Vector3.zero;
@@ -82,8 +132,19 @@ namespace WorldBuilderCoop
 
                 if (hasValidObject && objectIds.Count > 0)
                 {
-                    _lastSendTime = Time.time;
-                    PacketSender.SendUpdateObject(objectIds, position, rotation, scale, PacketDistribution.SendToOthers);
+                    bool positionChanged = Vector3.Distance(position, _lastPosition) > POSITION_THRESHOLD;
+                    bool rotationChanged = Quaternion.Angle(rotation, _lastRotation) > ROTATION_THRESHOLD;
+                    bool scaleChanged = Vector3.Distance(scale, _lastScale) > SCALE_THRESHOLD;
+
+                    if (positionChanged || rotationChanged || scaleChanged)
+                    {
+                        _lastSendTime = Time.time;
+                        _lastPosition = position;
+                        _lastRotation = rotation;
+                        _lastScale = scale;
+
+                        Core.EventManager.RaiseObjectMoved(objectIds, position, rotation, scale);
+                    }
                 }
             }
         }
@@ -100,8 +161,6 @@ namespace WorldBuilderCoop
                     foreach (var transform in __instance.selectedTransforms)
                     {
                         NetworkObject networkObject = transform.GetComponent<NetworkObject>();
-                        ConsoleBase.WriteLine(transform);
-                        ConsoleBase.WriteLine("network object: " + networkObject);
                         if (networkObject != null)
                         {
                             objectIds.Add(networkObject.NetworkId);
@@ -109,10 +168,7 @@ namespace WorldBuilderCoop
                     }
 
                     if (objectIds.Count > 0)
-                    {
-                        ConsoleBase.WriteLine(objectIds.Count);
-                        PacketSender.SendRemoveObject(objectIds, PacketDistribution.SendToOthers);
-                    }
+                        Core.EventManager.RaiseObjectRemoved(objectIds);
                 }
             }
         }
@@ -158,16 +214,14 @@ namespace WorldBuilderCoop
                     string currentPath = MonoBehaviourSingleton<BlEditorManager>.Instance.currentPrefabPath;
                     string fullPath = Path.Combine(currentPath, prefabName);
 
-                    // Ne pas appeler SetSelection() ici
-                    // MonoBehaviourSingleton<BlEditorManager>.Instance.SetSelection(gameObject.transform);
+                    MonoBehaviourSingleton<BlEditorManager>.Instance.SetSelection(gameObject.transform);
 
-                    PacketSender.SendPlaceObject(position, Quaternion.identity, Vector3.one, networkObject.NetworkId, fullPath, PacketDistribution.SendToOthers);
+                    Core.EventManager.RaiseObjectPlaced(networkObject.NetworkId, fullPath, position, Quaternion.identity, Vector3.one);
                 }
 
                 return false;
             }
         }
-
 
         [HarmonyPatch(typeof(BrokeProtocol.Client.Builder.BlEditorManager), "LoadMap")]
         public class BlEditorManagerLoadMap_Patch
@@ -177,7 +231,7 @@ namespace WorldBuilderCoop
                 if (Core.Network.IsConnected)
                 {
                     if (Core.Network.IsHost)
-                        PacketSender.SendLoadMap(WorldBuilderSync.getMapsObjects());
+                        PacketSender.SendLoadMap(WorldBuilderSync.GetMapsObjects());
                     else
                         Core.Network.Disconnect();
                 }

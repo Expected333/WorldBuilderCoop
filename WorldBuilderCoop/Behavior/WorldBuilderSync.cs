@@ -19,6 +19,7 @@ namespace WorldBuilderCoop
         public const float SyncInterval = 1f / TargetFPS;
         public const float PositionThreshold = 0.05f;
         public const float RotationThreshold = 1f;
+        public static List<int> blacklistSelection = new List<int>();
 
         public static void placeObject(Vector3 position, Quaternion rotation, Vector3 scale, int objectId, string prefabPath)
         {
@@ -79,13 +80,13 @@ namespace WorldBuilderCoop
 
             foreach (int id in objectIds)
             {
-                NetworkObject networkObject = NetworkObjectManager.GetNetworkObject(id);
+                NetworkObject networkObject = Core.networkObjectManager.GetNetworkObject(id);
 
                 if (networkObject == null)
                 {
                     var all = UnityEngine.Object.FindObjectsByType<NetworkObject>(FindObjectsSortMode.None);
                     networkObject = all.FirstOrDefault(x => x.NetworkId == id);
-                    if (networkObject != null) NetworkObjectManager.Register(id, networkObject);
+                    if (networkObject != null) Core.networkObjectManager.RegisterNetworkObject(id, networkObject);
                 }
 
                 if (networkObject != null && networkObject.GetComponent<UserAvatar>() == null)
@@ -105,10 +106,28 @@ namespace WorldBuilderCoop
             }
         }
 
+        public static void AddToSelection(int userId, int objectId)
+        {
+            NetworkObject networkObject = Core.networkObjectManager.GetNetworkObject(objectId);
+            if (networkObject != null && BlEditorManager.Instance.selectedTransforms.Contains(networkObject.transform))
+            {
+                blacklistSelection.Add(networkObject.NetworkId);
+                BlEditorManager.Instance.RemoveFromSelection(networkObject.transform);
+            }
+        }
+
+        public static void RemoveFromSelection(int userId, int objectId)
+        {
+            NetworkObject networkObject = Core.networkObjectManager.GetNetworkObject(objectId);
+            if (networkObject != null)
+                blacklistSelection.Remove(networkObject.NetworkId);
+        }
+
         private static int tempCount = 0;
 
         public static void loadMap(List<ObjectInfo> objects, bool clear, int totalObjectsCount, bool isLastChunk)
         {
+            ConsoleBase.WriteLine("Loading map chunk with " + objects.Count + " objects. Clear: " + clear);
             //preprocess
             BlEditorManager.Instance.ClearSelection();
             if (clear)
@@ -225,28 +244,34 @@ namespace WorldBuilderCoop
             }
         }
 
-        public static List<ObjectInfo> getMapsObjects()
+        public static List<ObjectInfo> GetMapsObjects()
         {
             var list = new List<ObjectInfo>();
             var list2 = SceneManager.Instance.AllTransforms();
             foreach (Transform item2 in list2)
             {
-                list.Add(new ObjectInfo()
+                var networkObj = item2.GetComponent<NetworkObject>();
+                if (networkObj == null)
+                    item2.gameObject.AddComponent<NetworkObject>();
+                else
                 {
-                    objectId = item2.GetInstanceID(),
-                    position = item2.transform.position,
-                    rotation = item2.transform.rotation,
-                    scale = item2.transform.localScale,
-                    prefabIndex = item2.GetPrefabIndex(),
-                    placeIndex = item2.parent.GetSiblingIndex(),
-                });
+                    list.Add(new ObjectInfo()
+                    {
+                        objectId = networkObj.NetworkId,
+                        position = item2.transform.position,
+                        rotation = item2.transform.rotation,
+                        scale = item2.transform.localScale,
+                        prefabIndex = item2.GetPrefabIndex(),
+                        placeIndex = item2.parent.GetSiblingIndex(),
+                    });
+                }
             }
             return list;
         }
 
         public static void userSync(int userId, Vector3 position, Quaternion rotation)
         {
-            UserAvatar[] userAvatars = UnityEngine.Object.FindObjectsOfType<UserAvatar>();
+            UserAvatar[] userAvatars = UnityEngine.Object.FindObjectsByType<UserAvatar>(FindObjectsSortMode.None);
             UserAvatar foundAvatar = null;
             foreach (var avatar in userAvatars)
             {
@@ -275,14 +300,14 @@ namespace WorldBuilderCoop
         {
             if (userId == Core.Network.MyUserId) return;
 
-            UserAvatar[] currentAvatars = UnityEngine.Object.FindObjectsOfType<UserAvatar>();
+            UserAvatar[] currentAvatars = UnityEngine.Object.FindObjectsByType<UserAvatar>(FindObjectsSortMode.None);
             foreach (var existing in currentAvatars)
             {
                 if (existing.UserId == userId) return;
             }
 
             GameObject userSphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            userSphere.name = $"User_{userId}";
+            userSphere.name = "User_" + userId;
             userSphere.transform.position = position;
             userSphere.transform.rotation = rotation;
             userSphere.transform.localScale = Vector3.one * 0.5f;
@@ -300,13 +325,14 @@ namespace WorldBuilderCoop
             avatar.rotation = rotation;
             avatar.placeIndex = 0;
 
-            if (Core.Network.connectedClientAvatar != null)
+            List<UserAvatar> avatarList = Core.Network.connectedClientAvatar;
+            if (avatarList != null)
             {
-                Core.Network.connectedClientAvatar.Add(avatar);
+                avatarList.Add(avatar);
             }
 
             GameObject arrow = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            arrow.name = $"User_{userId}_Arrow";
+            arrow.name = "User_" + userId + "_Arrow";
             arrow.transform.parent = userSphere.transform;
             arrow.transform.localPosition = Vector3.forward * 0.5f;
             arrow.transform.localScale = new Vector3(0.4f, 0.4f, 0.4f);
@@ -323,7 +349,7 @@ namespace WorldBuilderCoop
 
         public static void removeUser(int userId)
         {
-            UserAvatar[] userAvatars = UnityEngine.Object.FindObjectsOfType<UserAvatar>();
+            UserAvatar[] userAvatars = UnityEngine.Object.FindObjectsByType<UserAvatar>(FindObjectsSortMode.None);
             UserAvatar toRemove = null;
 
             foreach (var avatar in userAvatars)
@@ -337,9 +363,10 @@ namespace WorldBuilderCoop
 
             if (toRemove != null)
             {
-                if (Core.Network.connectedClientAvatar != null)
+                List<UserAvatar> avatarList = Core.Network.connectedClientAvatar;
+                if (avatarList != null)
                 {
-                    Core.Network.connectedClientAvatar.Remove(toRemove);
+                    avatarList.Remove(toRemove);
                 }
                 UnityEngine.Object.Destroy(toRemove.gameObject);
             }
@@ -371,7 +398,7 @@ namespace WorldBuilderCoop
                 }
                 catch (Exception ex)
                 {
-                    ConsoleBase.WriteError($"Player movement sync error: {ex.Message}");
+                    ConsoleBase.WriteError("Player movement sync error: " + ex.Message);
                 }
                 yield return new WaitForSeconds(SyncInterval);
             }
