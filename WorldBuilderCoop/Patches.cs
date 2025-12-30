@@ -18,6 +18,14 @@ namespace WorldBuilderCoop
         {
             public static void Postfix(BlEditorManager __instance)
             {
+                if (GameObject.Find("__WorldBuilderNetwork") != null)
+                    return;
+
+                GameObject go = new GameObject("__WorldBuilderNetwork");
+                go.hideFlags = HideFlags.HideAndDontSave;
+                Object.DontDestroyOnLoad(go);
+                go.AddComponent<NetworkManager>();
+
                 if (__instance != null)
                 {
                     ConsoleBase.WriteLine(__instance);

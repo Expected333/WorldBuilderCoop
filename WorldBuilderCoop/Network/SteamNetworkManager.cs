@@ -13,7 +13,7 @@ public class SteamNetworkManager : MonoBehaviour
     Callback<LobbyCreated_t> lobbyCreated;
     Callback<LobbyEnter_t> lobbyEntered;
     Callback<P2PSessionRequest_t> p2pRequest;
-
+    public bool IsConnected => CurrentLobby.IsValid();
     void Awake()
     {
         if (Instance != null)
@@ -31,6 +31,7 @@ public class SteamNetworkManager : MonoBehaviour
         lobbyCreated = Callback<LobbyCreated_t>.Create(OnLobbyCreated);
         lobbyEntered = Callback<LobbyEnter_t>.Create(OnLobbyEntered);
         p2pRequest = Callback<P2PSessionRequest_t>.Create(OnP2PRequest);
+        lobbyChatUpdate = Callback<LobbyChatUpdate_t>.Create(OnLobbyChatUpdate);
     }
 
     void Update()
@@ -62,6 +63,10 @@ public class SteamNetworkManager : MonoBehaviour
         HostID = SteamUser.GetSteamID();
 
         Debug.Log("Lobby created. Host: " + HostID);
+    }
+    void OnLobbyChatUpdate(LobbyChatUpdate_t data)
+    {
+
     }
 
     void OnLobbyEntered(LobbyEnter_t data)
