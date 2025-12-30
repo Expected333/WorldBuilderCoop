@@ -1,7 +1,6 @@
 ﻿using BrokeProtocol.Client.Builder;
 using BrokeProtocol.Managers;
 using BrokeProtocol.Utility;
-using BrokeProtocol.Utility.ResourceDB;
 using HarmonyLib;
 using ModLoader;
 using System.Collections.Generic;
@@ -28,13 +27,6 @@ namespace WorldBuilderCoop
             private static System.Collections.IEnumerator ApplyBuilderThemeDelayed(BlEditorManager instance)
             {
                 yield return new WaitForFixedUpdate();
-
-                ConsoleBase.WriteLine("[WorldBuilder] WB_Patch delayed applied");
-                yield return new WaitForSeconds(3f);
-                foreach (var obj in ResourceDB.Instance.GetAllAssets(""))
-                {
-                    ConsoleBase.WriteLine(" id de l'obj " + obj.name.GetPrefabIndex() + " = ");
-                }
 
                 try
                 {
