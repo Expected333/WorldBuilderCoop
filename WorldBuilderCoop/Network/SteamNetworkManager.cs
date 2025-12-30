@@ -91,7 +91,23 @@ public class SteamNetworkManager : MonoBehaviour
     {
         SteamNetworking.AcceptP2PSessionWithUser(req.m_steamIDRemote);
     }
-
+    public void SendToAll(byte[] data)
+    {
+        if (IsHost)
+        {
+            CSteamID hostID = SteamUser.GetSteamID();
+            Broadcast(data, hostID);
+        }
+        else
+        {
+            SteamNetworking.SendP2PPacket(
+                HostID,
+                data,
+                (uint)data.Length,
+                EP2PSend.k_EP2PSendReliable
+            );
+        }
+    }
     // Client → Host
     public void SendToHost(byte[] data)
     {
