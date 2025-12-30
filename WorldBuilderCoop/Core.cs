@@ -25,7 +25,7 @@ namespace WorldBuilderCoop
 
             networkObjectManager = new NetworkObjectManager();
             EventManager = WorldBuilderEventManager.Instance;
-            NetworkSync = new NetworkSyncHandler(Network);
+            NetworkSync = new NetworkSyncHandler();
 
             PatchAll();
         }

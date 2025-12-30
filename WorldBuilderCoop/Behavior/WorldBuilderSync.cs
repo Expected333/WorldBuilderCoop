@@ -4,6 +4,7 @@ using BrokeProtocol.Managers;
 using BrokeProtocol.Utility;
 using BrokeProtocol.Utility.ResourceDB;
 using ModLoader;
+using Steamworks;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -319,7 +320,9 @@ namespace WorldBuilderCoop
 
         public static void addUser(int userId, Vector3 position, Quaternion rotation)
         {
-            if (userId == Core.Network.MyUserId) return;
+            // Get current user ID from Steamworks
+            int currentUserId = SteamUser.GetSteamID().m_SteamID.GetHashCode();
+            if (userId == currentUserId) return;
 
             UserAvatar[] currentAvatars = UnityEngine.Object.FindObjectsByType<UserAvatar>(FindObjectsSortMode.None);
             foreach (var existing in currentAvatars)
@@ -346,11 +349,9 @@ namespace WorldBuilderCoop
             avatar.rotation = rotation;
             avatar.placeIndex = 0;
 
-            List<UserAvatar> avatarList = Core.Network.connectedClientAvatar;
-            if (avatarList != null)
-            {
-                avatarList.Add(avatar);
-            }
+            // Add to avatar list if it exists
+            UserAvatar[] allAvatars = UnityEngine.Object.FindObjectsByType<UserAvatar>(FindObjectsSortMode.None);
+            // Avatar is already added as component above
 
             GameObject arrow = GameObject.CreatePrimitive(PrimitiveType.Cube);
             arrow.name = "User_" + userId + "_Arrow";
@@ -384,11 +385,6 @@ namespace WorldBuilderCoop
 
             if (toRemove != null)
             {
-                List<UserAvatar> avatarList = Core.Network.connectedClientAvatar;
-                if (avatarList != null)
-                {
-                    avatarList.Remove(toRemove);
-                }
                 UnityEngine.Object.Destroy(toRemove.gameObject);
             }
         }
@@ -411,7 +407,9 @@ namespace WorldBuilderCoop
                         if (Vector3.Distance(currentPos, lastPosition) > PositionThreshold ||
                             Quaternion.Angle(currentRot, lastRotation) > RotationThreshold)
                         {
-                            byte[] data = SerializePlayerSync(Core.Network.MyUserId, currentPos, currentRot);
+                            // Get current user ID from Steamworks
+                            int userId = SteamUser.GetSteamID().m_SteamID.GetHashCode();
+                            byte[] data = SerializePlayerSync(userId, currentPos, currentRot);
                             SteamNetworkManager.Instance.SendToAll(data);
                             lastPosition = currentPos;
                             lastRotation = currentRot;

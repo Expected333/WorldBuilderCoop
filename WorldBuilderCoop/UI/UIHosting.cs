@@ -43,8 +43,8 @@ namespace WorldBuilderCoop
                 return;
             }
 
-            MainUI.createHostBtn(sceneManager);
-            MainUI.createJoinBtn(sceneManager);
+            // Show mode selection first
+            MainUI.createModeSelectionUI(sceneManager);
 
             ConsoleBase.WriteLine("[WBCoop] Builder theme applied successfully");
         }

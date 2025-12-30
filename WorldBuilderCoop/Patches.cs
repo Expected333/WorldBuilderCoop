@@ -3,6 +3,7 @@ using BrokeProtocol.Managers;
 using BrokeProtocol.Utility;
 using HarmonyLib;
 using ModLoader;
+using Steamworks;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
@@ -18,6 +19,14 @@ namespace WorldBuilderCoop
         {
             public static void Postfix(BlEditorManager __instance)
             {
+                if (GameObject.Find("__WorldBuilderNetwork") != null)
+                    return;
+
+                GameObject go = new GameObject("__WorldBuilderNetwork");
+                go.hideFlags = HideFlags.HideAndDontSave;
+                Object.DontDestroyOnLoad(go);
+                go.AddComponent<SteamNetworkManager>();
+
                 if (__instance != null)
                 {
                     ConsoleBase.WriteLine(__instance);
@@ -46,14 +55,14 @@ namespace WorldBuilderCoop
             public static bool Prefix(BlEditorManager __instance, Transform t)
             {
                 if (t == null) return false;
-
                 var networkObj = t.GetComponent<NetworkObject>();
                 if (networkObj != null)
                 {
                     if (WorldBuilderSync.blacklistSelection.Contains(networkObj.NetworkId))
                         return false;
 
-                    int userId = Core.Network.MyUserId;
+                    int userId = SteamUser.GetSteamID().m_SteamID.GetHashCode();
+
                     Core.networkObjectManager.MarkAsSelectedByUser(userId, networkObj.NetworkId);
 
                     WorldBuilderEventManager.Instance.RaiseSelectionChanged(userId, networkObj.NetworkId, true);
@@ -71,8 +80,10 @@ namespace WorldBuilderCoop
                 var networkObj = t.GetComponent<NetworkObject>();
                 if (networkObj != null)
                 {
-                    int userId = Core.Network.MyUserId;
+                    int userId = SteamUser.GetSteamID().m_SteamID.GetHashCode();
+
                     Core.networkObjectManager.UnmarkAsSelectedByUser(userId, networkObj.NetworkId);
+
                     WorldBuilderEventManager.Instance.RaiseSelectionChanged(userId, networkObj.NetworkId, false);
                 }
             }
