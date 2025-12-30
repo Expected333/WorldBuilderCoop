@@ -1,6 +1,7 @@
 ﻿using ModLoader;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 using WorldBuilderCoop.Network;
 
@@ -141,15 +142,13 @@ namespace WorldBuilderCoop.Events
     // ============ NETWORK SYNC HANDLER ============
     public class NetworkSyncHandler
     {
-        private readonly NetworkHandler _networkHandler;
         private readonly WorldBuilderEventManager _eventManager;
 
-        public NetworkSyncHandler(NetworkHandler networkHandler)
+        public NetworkSyncHandler()
         {
-            _networkHandler = networkHandler;
             _eventManager = WorldBuilderEventManager.Instance;
 
-            // sub events
+            // Subscribe to events
             _eventManager.OnObjectPlaced += HandleObjectPlaced;
             _eventManager.OnObjectMoved += HandleObjectMoved;
             _eventManager.OnObjectRemoved += HandleObjectRemoved;
@@ -161,7 +160,8 @@ namespace WorldBuilderCoop.Events
         {
             try
             {
-                PacketSender.SendPlaceObject(e.Position, e.Rotation, e.Scale, e.ObjectId, e.PrefabPath, PacketDistribution.SendToOthers);
+                byte[] data = SerializePlaceObject(e.Position, e.Rotation, e.Scale, e.ObjectId, e.PrefabPath);
+                SendPacket(data);
             }
             catch (Exception ex)
             {
@@ -173,7 +173,8 @@ namespace WorldBuilderCoop.Events
         {
             try
             {
-                PacketSender.SendUpdateObject(e.ObjectIds, e.Position, e.Rotation, e.Scale, PacketDistribution.SendToOthers);
+                byte[] data = SerializeUpdateObject(e.ObjectIds, e.Position, e.Rotation, e.Scale);
+                SendPacket(data);
             }
             catch (Exception ex)
             {
@@ -185,7 +186,8 @@ namespace WorldBuilderCoop.Events
         {
             try
             {
-                PacketSender.SendRemoveObject(e.ObjectIds, PacketDistribution.SendToOthers);
+                byte[] data = SerializeRemoveObject(e.ObjectIds);
+                SendPacket(data);
             }
             catch (Exception ex)
             {
@@ -197,10 +199,13 @@ namespace WorldBuilderCoop.Events
         {
             try
             {
+                byte[] data;
                 if (e.IsSelected)
-                    PacketSender.SendAddToSelection(e.UserId, e.ObjectId);
+                    data = SerializeAddToSelection(e.UserId, e.ObjectId);
                 else
-                    PacketSender.SendRemoveToSelection(e.UserId, e.ObjectId);
+                    data = SerializeRemoveFromSelection(e.UserId, e.ObjectId);
+
+                SendPacket(data);
             }
             catch (Exception ex)
             {
@@ -212,13 +217,174 @@ namespace WorldBuilderCoop.Events
         {
             try
             {
-                PacketSender.SendPlayerSync(e.UserId, e.Position, e.Rotation, PacketDistribution.SendToOthers);
+                byte[] data = SerializePlayerSync(e.UserId, e.Position, e.Rotation);
+                SendPacket(data);
             }
             catch (Exception ex)
             {
                 ConsoleBase.WriteError("Error sending player moved: " + ex.Message);
             }
         }
+
+        // ═══════════════════════════════════════════
+        // SEND HELPER - Host or Client
+        // ═══════════════════════════════════════════
+
+        private void SendPacket(byte[] data)
+        {
+            if (SteamNetworkManager.Instance == null)
+            {
+                ConsoleBase.WriteError("SteamNetworkManager not initialized");
+                return;
+            }
+
+            SteamNetworkManager.Instance.SendToAll(data);
+        }
+
+        // ═══════════════════════════════════════════
+        // SERIALIZATION METHODS
+        // ═══════════════════════════════════════════
+
+        private byte[] SerializePlaceObject(Vector3 position, Quaternion rotation, Vector3 scale, int objectId, string prefabPath)
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write((byte)Packets.PlaceObject);
+                    writer.Write(position.x);
+                    writer.Write(position.y);
+                    writer.Write(position.z);
+                    writer.Write(rotation.x);
+                    writer.Write(rotation.y);
+                    writer.Write(rotation.z);
+                    writer.Write(rotation.w);
+                    writer.Write(scale.x);
+                    writer.Write(scale.y);
+                    writer.Write(scale.z);
+                    writer.Write(objectId);
+                    writer.Write(prefabPath);
+
+                    return ms.ToArray();
+                }
+            }
+        }
+
+        private byte[] SerializeRemoveObject(List<int> objectIds)
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write((byte)Packets.RemoveObjects);
+                    writer.Write(objectIds.Count);
+
+                    foreach (var objectId in objectIds)
+                    {
+                        writer.Write(objectId);
+                    }
+
+                    return ms.ToArray();
+                }
+            }
+        }
+
+        private byte[] SerializeUpdateObject(List<int> objectIds, Vector3 position, Quaternion rotation, Vector3 scale)
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write((byte)Packets.UpdateObjects);
+
+                    if (objectIds != null)
+                    {
+                        writer.Write(objectIds.Count);
+                        foreach (int id in objectIds)
+                        {
+                            writer.Write(id);
+                        }
+                    }
+                    else
+                    {
+                        writer.Write(0);
+                    }
+
+                    writer.Write(position.x);
+                    writer.Write(position.y);
+                    writer.Write(position.z);
+
+                    writer.Write(rotation.x);
+                    writer.Write(rotation.y);
+                    writer.Write(rotation.z);
+                    writer.Write(rotation.w);
+
+                    writer.Write(scale.x);
+                    writer.Write(scale.y);
+                    writer.Write(scale.z);
+
+                    // No component data for now
+                    writer.Write(0);
+
+                    return ms.ToArray();
+                }
+            }
+        }
+
+        private byte[] SerializePlayerSync(int userId, Vector3 position, Quaternion rotation)
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write((byte)Packets.PlayerSync);
+                    writer.Write(userId);
+                    writer.Write(position.x);
+                    writer.Write(position.y);
+                    writer.Write(position.z);
+                    writer.Write(rotation.x);
+                    writer.Write(rotation.y);
+                    writer.Write(rotation.z);
+                    writer.Write(rotation.w);
+
+                    return ms.ToArray();
+                }
+            }
+        }
+
+        private byte[] SerializeAddToSelection(int userId, int objectId)
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write((byte)Packets.AddToSelection);
+                    writer.Write(userId);
+                    writer.Write(objectId);
+
+                    return ms.ToArray();
+                }
+            }
+        }
+
+        private byte[] SerializeRemoveFromSelection(int userId, int objectId)
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write((byte)Packets.RemoveFromSelection);
+                    writer.Write(userId);
+                    writer.Write(objectId);
+
+                    return ms.ToArray();
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════
+        // CLEANUP
+        // ═══════════════════════════════════════════
 
         public void Cleanup()
         {

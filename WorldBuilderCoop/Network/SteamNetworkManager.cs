@@ -1,5 +1,7 @@
 ﻿using Steamworks;
+using System;
 using UnityEngine;
+using WorldBuilderCoop.Network;
 
 public class SteamNetworkManager : MonoBehaviour
 {
@@ -162,8 +164,55 @@ public class SteamNetworkManager : MonoBehaviour
 
     void ApplyPacket(byte[] data)
     {
-        // Call construction system
-        // Example:
-        // PacketParser.Parse(data);
+        if (data == null || data.Length < 1) return;
+
+        byte packetType = data[0];
+
+        try
+        {
+            switch ((Packets)packetType)
+            {
+                case Packets.PlaceObject:
+                    PacketHandler.HandlePlaceObject(data, data.Length);
+                    break;
+
+                case Packets.RemoveObjects:
+                    PacketHandler.HandleRemoveObject(data, data.Length);
+                    break;
+
+                case Packets.UpdateObjects:
+                    PacketHandler.HandleUpdateObject(data, data.Length);
+                    break;
+
+                case Packets.LoadMap:
+                    PacketHandler.HandleLoadMap(data, data.Length);
+                    break;
+
+                case Packets.PlayerSync:
+                    PacketHandler.HandlePlayerSync(data, data.Length);
+                    break;
+
+                case Packets.RemovePlayer:
+                    PacketHandler.HandleRemovePlayer(data);
+                    break;
+
+                case Packets.AddToSelection:
+                    PacketHandler.HandleAddToSelection(data, data.Length);
+                    break;
+
+                case Packets.RemoveFromSelection:
+                    PacketHandler.HandleRemoveFromSelection(data, data.Length);
+                    break;
+
+                default:
+                    Debug.LogWarning($"Unknown packet type: {packetType}");
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"Error handling packet type {packetType}: {ex.Message}\n{ex.StackTrace}");
+        }
     }
+
 }

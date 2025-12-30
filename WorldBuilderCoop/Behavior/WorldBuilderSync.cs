@@ -7,6 +7,7 @@ using ModLoader;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using UnityEngine;
 using WorldBuilderCoop.Network;
@@ -148,7 +149,7 @@ namespace WorldBuilderCoop
                 GameObject gameObject = SceneManager.Instance.InstantiatePrefab(prefab, obj.placeIndex, obj.position, obj.rotation);
                 UpdateObject(gameObject.transform, obj);
                 SceneManager.Instance.IncrementTransferProgress(1);
-                if (Core.Network.IsConnected)
+                if (SteamNetworkManager.Instance != null && SteamNetworkManager.Instance.IsConnected)
                 {
                     InitializeEditor(gameObject);
                 }
@@ -269,6 +270,26 @@ namespace WorldBuilderCoop
             return list;
         }
 
+        private static byte[] SerializePlayerSync(int userId, Vector3 position, Quaternion rotation)
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write((byte)Packets.PlayerSync);
+                    writer.Write(userId);
+                    writer.Write(position.x);
+                    writer.Write(position.y);
+                    writer.Write(position.z);
+                    writer.Write(rotation.x);
+                    writer.Write(rotation.y);
+                    writer.Write(rotation.z);
+                    writer.Write(rotation.w);
+                    return ms.ToArray();
+                }
+            }
+        }
+
         public static void userSync(int userId, Vector3 position, Quaternion rotation)
         {
             UserAvatar[] userAvatars = UnityEngine.Object.FindObjectsByType<UserAvatar>(FindObjectsSortMode.None);
@@ -377,7 +398,7 @@ namespace WorldBuilderCoop
             Vector3 lastPosition = Vector3.zero;
             Quaternion lastRotation = Quaternion.identity;
 
-            while (Core.Network.IsConnected)
+            while (SteamNetworkManager.Instance != null && SteamNetworkManager.Instance.IsConnected)
             {
                 try
                 {
@@ -390,7 +411,8 @@ namespace WorldBuilderCoop
                         if (Vector3.Distance(currentPos, lastPosition) > PositionThreshold ||
                             Quaternion.Angle(currentRot, lastRotation) > RotationThreshold)
                         {
-                            PacketSender.SendPlayerSync(Core.Network.MyUserId, currentPos, currentRot, PacketDistribution.SendToOthers);
+                            byte[] data = SerializePlayerSync(Core.Network.MyUserId, currentPos, currentRot);
+                            SteamNetworkManager.Instance.SendToAll(data);
                             lastPosition = currentPos;
                             lastRotation = currentRot;
                         }

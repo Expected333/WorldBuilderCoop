@@ -6,6 +6,7 @@ using ModLoader;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using WorldBuilderCoop.Events;
 using WorldBuilderCoop.Network;
 
 namespace WorldBuilderCoop
@@ -17,14 +18,6 @@ namespace WorldBuilderCoop
         {
             public static void Postfix(BlEditorManager __instance)
             {
-                if (GameObject.Find("__WorldBuilderNetwork") != null)
-                    return;
-
-                GameObject go = new GameObject("__WorldBuilderNetwork");
-                go.hideFlags = HideFlags.HideAndDontSave;
-                Object.DontDestroyOnLoad(go);
-                go.AddComponent<NetworkManager>();
-
                 if (__instance != null)
                 {
                     ConsoleBase.WriteLine(__instance);
@@ -63,7 +56,7 @@ namespace WorldBuilderCoop
                     int userId = Core.Network.MyUserId;
                     Core.networkObjectManager.MarkAsSelectedByUser(userId, networkObj.NetworkId);
 
-                    Core.EventManager.RaiseSelectionChanged(userId, networkObj.NetworkId, true);
+                    WorldBuilderEventManager.Instance.RaiseSelectionChanged(userId, networkObj.NetworkId, true);
                 }
                 return true;
             }
@@ -80,7 +73,7 @@ namespace WorldBuilderCoop
                 {
                     int userId = Core.Network.MyUserId;
                     Core.networkObjectManager.UnmarkAsSelectedByUser(userId, networkObj.NetworkId);
-                    Core.EventManager.RaiseSelectionChanged(userId, networkObj.NetworkId, false);
+                    WorldBuilderEventManager.Instance.RaiseSelectionChanged(userId, networkObj.NetworkId, false);
                 }
             }
         }
@@ -143,7 +136,7 @@ namespace WorldBuilderCoop
                         _lastRotation = rotation;
                         _lastScale = scale;
 
-                        Core.EventManager.RaiseObjectMoved(objectIds, position, rotation, scale);
+                        WorldBuilderEventManager.Instance.RaiseObjectMoved(objectIds, position, rotation, scale);
                     }
                 }
             }
@@ -168,7 +161,7 @@ namespace WorldBuilderCoop
                     }
 
                     if (objectIds.Count > 0)
-                        Core.EventManager.RaiseObjectRemoved(objectIds);
+                        WorldBuilderEventManager.Instance.RaiseObjectRemoved(objectIds);
                 }
             }
         }
@@ -216,7 +209,7 @@ namespace WorldBuilderCoop
 
                     MonoBehaviourSingleton<BlEditorManager>.Instance.SetSelection(gameObject.transform);
 
-                    Core.EventManager.RaiseObjectPlaced(networkObject.NetworkId, fullPath, position, Quaternion.identity, Vector3.one);
+                    WorldBuilderEventManager.Instance.RaiseObjectPlaced(networkObject.NetworkId, fullPath, position, Quaternion.identity, Vector3.one);
                 }
 
                 return false;
@@ -228,13 +221,63 @@ namespace WorldBuilderCoop
         {
             public static void Postfix(BrokeProtocol.Client.UI.BlPrefabItemButton __instance)
             {
-                if (Core.Network.IsConnected)
+                if (SteamNetworkManager.Instance != null && SteamNetworkManager.Instance.IsConnected)
                 {
-                    if (Core.Network.IsHost)
-                        PacketSender.SendLoadMap(WorldBuilderSync.GetMapsObjects());
-                    else
-                        Core.Network.Disconnect();
+                    if (SteamNetworkManager.Instance.IsHost)
+                    {
+                        byte[] data = SerializeLoadMap(WorldBuilderSync.GetMapsObjects());
+                        SteamNetworkManager.Instance.SendToAll(data);
+                    }
                 }
+            }
+
+            private static byte[] SerializeLoadMap(List<ObjectInfo> objects)
+            {
+                int chunkSize = 30;
+                int totalObjects = objects.Count;
+                byte[] lastChunk = new byte[0];
+
+                for (int i = 0; i < totalObjects; i += chunkSize)
+                {
+                    List<ObjectInfo> currentChunk = objects.GetRange(i, System.Math.Min(chunkSize, totalObjects - i));
+                    bool isFirstChunk = (i == 0);
+                    bool isLastChunk = (i + chunkSize >= totalObjects);
+
+                    using (var ms = new MemoryStream())
+                    {
+                        using (var writer = new BinaryWriter(ms))
+                        {
+                            writer.Write((byte)Packets.LoadMap);
+                            writer.Write(currentChunk.Count);
+                            writer.Write(isFirstChunk);
+                            writer.Write(totalObjects);
+                            writer.Write(isLastChunk);
+
+                            foreach (var obj in currentChunk)
+                            {
+                                writer.Write(obj.objectId);
+                                writer.Write(obj.position.x); writer.Write(obj.position.y); writer.Write(obj.position.z);
+                                writer.Write(obj.rotation.x); writer.Write(obj.rotation.y); writer.Write(obj.rotation.z); writer.Write(obj.rotation.w);
+                                writer.Write(obj.scale.x); writer.Write(obj.scale.y); writer.Write(obj.scale.z);
+                                writer.Write(obj.prefabIndex);
+                                writer.Write(obj.placeIndex);
+                            }
+
+                            lastChunk = ms.ToArray();
+                        }
+                    }
+
+                    // Send each chunk
+                    SteamNetworkManager.Instance.SendToAll(lastChunk);
+
+                    if (i + chunkSize < totalObjects)
+                    {
+                        // Small delay between chunks
+                        System.Threading.Thread.Sleep(200);
+                    }
+                }
+
+                return lastChunk;
             }
         }
     }

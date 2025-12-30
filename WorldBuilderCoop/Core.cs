@@ -6,7 +6,6 @@ namespace WorldBuilderCoop
 {
     public class Core : ModBase
     {
-        public static NetworkHandler Network { get; private set; }
         public static NetworkObjectManager networkObjectManager { get; private set; }
         public static WorldBuilderEventManager EventManager { get; private set; }
         public static NetworkSyncHandler NetworkSync { get; private set; }
@@ -24,7 +23,6 @@ namespace WorldBuilderCoop
             Logger.Info("===================================");
             Logger.Info("Loading system ...");
 
-            Network = new NetworkHandler();
             networkObjectManager = new NetworkObjectManager();
             EventManager = WorldBuilderEventManager.Instance;
             NetworkSync = new NetworkSyncHandler(Network);
