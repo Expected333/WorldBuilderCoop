@@ -25,33 +25,18 @@ namespace WorldBuilderCoop.UI
             container.style.borderBottomLeftRadius = container.style.borderBottomRightRadius = 10;
             container.style.width = 260;
 
-            // Check if LOCAL mode
-            bool isLocalMode = SteamNetworkManager.Instance != null && SteamNetworkManager.Instance.IsLocalMode();
-
-            Label infoLabel;
-            TextField inputField;
-
-            if (isLocalMode)
-            {
-                infoLabel = new Label { text = "You are in LOCAL mode\n2nd instance joins automatically" };
-                inputField = new TextField { label = "PLAYER NAME", name = "PlayerNameInput", value = "Player" };
-            }
-            else
-            {
-                infoLabel = new Label { text = "Ask the host for their Lobby ID" };
-                inputField = new TextField { label = "LOBBY ID", name = "LobbyIdInput", value = "" };
-            }
-
+            Label infoLabel = new Label { text = "Ask the host for their Lobby ID" };
             infoLabel.style.fontSize = 10;
             infoLabel.style.color = new Color(0.7f, 0.7f, 0.7f);
             infoLabel.style.marginTop = -15;
             infoLabel.style.marginBottom = 10;
 
+            TextField inputField = new TextField { label = "LOBBY ID", name = "LobbyIdInput", value = "" };
             Styles.ApplyInputStyle(inputField);
 
             Button connectBtn = new Button { text = "JOIN", name = "ConnectButton" };
             Styles.ApplyButtonStyle(connectBtn);
-            connectBtn.clicked += () => connectSession(sceneManager, inputField.value, isLocalMode);
+            connectBtn.clicked += () => connectSession(sceneManager, inputField.value);
 
             container.Add(infoLabel);
             container.Add(inputField);
@@ -72,40 +57,30 @@ namespace WorldBuilderCoop.UI
             }
         }
 
-        public static void connectSession(SceneManager sceneManager, string inputValue, bool isLocalMode)
+        public static void connectSession(SceneManager sceneManager, string inputValue)
         {
             destroyConnectUI(sceneManager);
             MainUI.destroyHostAndJoinUI(sceneManager);
 
-            if (isLocalMode)
+            if (string.IsNullOrEmpty(inputValue))
             {
-                // In LOCAL mode, just join immediately
-                ConsoleBase.WriteLine("[WorldBuilder] Joining in LOCAL mode...");
+                ConsoleBase.WriteError("[WorldBuilder] Lobby ID cannot be empty");
+                return;
+            }
+
+            if (ulong.TryParse(inputValue, out ulong lobbyIdValue))
+            {
+                CSteamID lobbyId = new CSteamID(lobbyIdValue);
+                ConsoleBase.WriteLine("[WorldBuilder] Attempting to join lobby: " + inputValue);
+
+                SteamAPICall_t apiCall = SteamMatchmaking.JoinLobby(lobbyId);
+                ConsoleBase.WriteLine("[WorldBuilder] JoinLobby called - waiting for callback...");
+
                 ConnectedUI.createDisconnectBtn(sceneManager);
             }
             else
             {
-                // In STEAM mode, validate lobby ID
-                if (string.IsNullOrEmpty(inputValue))
-                {
-                    ConsoleBase.WriteError("[WorldBuilder] Lobby ID cannot be empty");
-                    return;
-                }
-
-                if (ulong.TryParse(inputValue, out ulong lobbyIdValue))
-                {
-                    CSteamID lobbyId = new CSteamID(lobbyIdValue);
-                    ConsoleBase.WriteLine("[WorldBuilder] Attempting to join lobby: " + inputValue);
-
-                    SteamAPICall_t apiCall = SteamMatchmaking.JoinLobby(lobbyId);
-                    ConsoleBase.WriteLine("[WorldBuilder] JoinLobby called - waiting for callback...");
-
-                    ConnectedUI.createDisconnectBtn(sceneManager);
-                }
-                else
-                {
-                    ConsoleBase.WriteError("[WorldBuilder] Invalid lobby ID format. Must be a number.");
-                }
+                ConsoleBase.WriteError("[WorldBuilder] Invalid lobby ID format. Must be a number.");
             }
         }
     }

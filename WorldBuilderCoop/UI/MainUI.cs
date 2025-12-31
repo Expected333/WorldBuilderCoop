@@ -8,7 +8,6 @@ internal class MainUI
     public static void createModeSelectionUI(SceneManager sceneManager)
     {
         var root = sceneManager.uiDocument.rootVisualElement;
-
         VisualElement container = new VisualElement();
         container.name = "ModeSelectionPanel";
         container.style.paddingLeft = container.style.paddingRight = 20;
@@ -51,19 +50,27 @@ internal class MainUI
         {
             SteamNetworkManager.Instance.SetNetworkMode(mode);
             ConsoleBase.WriteLine("[WorldBuilder] Network mode set to: " + mode);
-        }
 
-        createJoinBtn(sceneManager);
-        createHostBtn(sceneManager);
+            if (mode == NetworkMode.Local)
+            {
+                // LOCAL mode: directly connect (Host or Client automatically)
+                ConsoleBase.WriteLine("[WorldBuilder] LOCAL mode - auto connecting...");
+                ConnectedUI.createDisconnectBtn(sceneManager);
+            }
+            else
+            {
+                // STEAM mode: show Host/Join buttons
+                createJoinBtn(sceneManager);
+                createHostBtn(sceneManager);
+            }
+        }
     }
 
     public static void createJoinBtn(SceneManager sceneManager)
     {
         var root = sceneManager.uiDocument.rootVisualElement;
         Button joinBtn = new Button { text = "JOIN GAME", name = "JoinButton" };
-
         Styles.ApplyButtonStyle(joinBtn);
-
         joinBtn.clicked += () => ConnectUI.createConnectUI(sceneManager);
         root.Add(joinBtn);
     }
@@ -72,9 +79,7 @@ internal class MainUI
     {
         var root = sceneManager.uiDocument.rootVisualElement;
         Button hostBtn = new Button { text = "HOST GAME", name = "HostButton" };
-
         Styles.ApplyButtonStyle(hostBtn);
-
         hostBtn.clicked += () => createHost(sceneManager);
         root.Add(hostBtn);
     }
@@ -84,10 +89,12 @@ internal class MainUI
         var root = sceneManager.uiDocument.rootVisualElement;
         var HostButton = root.Q<Button>("HostButton");
         var JoinButton = root.Q<Button>("JoinButton");
-
-        if (HostButton != null && JoinButton != null)
+        if (HostButton != null)
         {
             root.Remove(HostButton);
+        }
+        if (JoinButton != null)
+        {
             root.Remove(JoinButton);
         }
     }
@@ -101,7 +108,9 @@ internal class MainUI
             ConsoleBase.WriteLine("[WorldBuilder] Creating lobby...");
         }
         else
+        {
             ConsoleBase.WriteError("[WorldBuilder] SteamNetworkManager not initialized");
+        }
         ConnectedUI.createDisconnectBtn(sceneManager);
     }
 }

@@ -12,14 +12,11 @@ namespace WorldBuilderCoop.UI
         {
             var root = sceneManager.uiDocument.rootVisualElement;
             Button disconnectBtn = new Button { text = "Disconnect", name = "Disconnect" };
-
             Styles.ApplyButtonStyle(disconnectBtn);
             disconnectBtn.style.color = Color.red;
             disconnectBtn.clicked += () => disconnect(sceneManager);
-
             root.Add(disconnectBtn);
 
-            // Only show copy ID button in STEAM mode
             bool isLocalMode = SteamNetworkManager.Instance != null && SteamNetworkManager.Instance.IsLocalMode();
             if (!isLocalMode)
             {
@@ -37,23 +34,28 @@ namespace WorldBuilderCoop.UI
             var copyIdBtn = root.Q<Button>("CopyIdButton");
 
             if (disconnectBtn != null)
-            {
                 root.Remove(disconnectBtn);
-            }
             if (copyIdBtn != null)
-            {
                 root.Remove(copyIdBtn);
-            }
         }
 
         public static void disconnect(SceneManager sceneManager)
         {
-            bool isLocalMode = SteamNetworkManager.Instance != null && SteamNetworkManager.Instance.IsLocalMode();
-
-            if (!isLocalMode && SteamNetworkManager.Instance != null && SteamNetworkManager.Instance.IsConnected)
+            // Properly close network connections
+            if (SteamNetworkManager.Instance != null)
             {
-                SteamMatchmaking.LeaveLobby(SteamNetworkManager.Instance.CurrentLobby);
-                ConsoleBase.WriteLine("[WorldBuilder] Disconnected from lobby");
+                bool isLocalMode = SteamNetworkManager.Instance.IsLocalMode();
+
+                if (isLocalMode)
+                {
+                    SteamNetworkManager.Instance.DisconnectLocal();
+                    ConsoleBase.WriteLine("[WorldBuilder] Disconnected from local lobby");
+                }
+                else if (SteamNetworkManager.Instance.IsConnected)
+                {
+                    SteamMatchmaking.LeaveLobby(SteamNetworkManager.Instance.CurrentLobby);
+                    ConsoleBase.WriteLine("[WorldBuilder] Disconnected from Steam lobby");
+                }
             }
 
             destroyDisconnectBtn(sceneManager);
