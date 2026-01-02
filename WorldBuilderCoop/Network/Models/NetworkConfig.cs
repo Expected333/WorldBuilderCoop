@@ -1,4 +1,4 @@
-﻿using Unity.Mathematics;
+using Unity.Mathematics;
 using UnityEngine;
 
 namespace WorldBuilderCoop.Network
@@ -23,7 +23,12 @@ namespace WorldBuilderCoop.Network
         AddToSelection = 5,
         PlayerSync = 6,
         RemoveFromSelection = 7,
-        RemovePlayer = 8
+        RemovePlayer = 8,
+        LoadMapFinished = 9,
+        Undo = 10,
+        Redo = 11,
+        Duplicate = 12,
+        SaveHistory = 13
     }
 
     public enum PacketDistribution
@@ -35,24 +40,23 @@ namespace WorldBuilderCoop.Network
 
     public class UserAvatar : MonoBehaviour
     {
-        public int UserId { get; set; }
-        public Vector3 position { get; set; }
-        public quaternion rotation { get; set; }
-        public int placeIndex { get; set; }
+        public int UserId;
+        public Vector3 position;
+        public quaternion rotation;
+        public int placeIndex;
     }
 
     public class NetworkObject : MonoBehaviour
     {
-        public int NetworkId { get; set; }
+        public int NetworkId;
+        public string PrefabPath;
+        public int PrefabIndex = -1;
     }
 
     public class ObjectInfo
     {
-        public Vector3 position;
-        public Quaternion rotation;
-        public Vector3 scale;
         public int objectId;
-        public int prefabIndex;
         public int placeIndex;
+        public byte[] componentData;
     }
 }

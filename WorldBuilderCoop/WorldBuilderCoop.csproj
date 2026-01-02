@@ -33,21 +33,33 @@
   <ItemGroup>
     <Compile Include="Behavior\AvatarTextDisplay.cs" />
     <Compile Include="Behavior\BoundingHighlightManager.cs" />
+    <Compile Include="Behavior\Interpolators.cs" />
+    <Compile Include="Behavior\ObjectHelper.cs" />
+    <Compile Include="Behavior\PlayerSyncHelper.cs" />
+    <Compile Include="Behavior\PlayerSyncTracker.cs" />
+    <Compile Include="Behavior\WorldBuilderHistoryManager.cs" />
+    <Compile Include="Behavior\WorldBuilderSync.cs" />
+    <Compile Include="Core.cs" />
+    <Compile Include="DTOs\SerializedComponent.cs" />
     <Compile Include="Events\WorldBuilderEventManager.cs" />
+    <Compile Include="Managers\MapManager.cs" />
     <Compile Include="Network\LocalNetworkManager.cs" />
+    <Compile Include="Network\LocalUserManger.cs" />
     <Compile Include="Network\Models\NetworkConfig.cs" />
     <Compile Include="Network\NetworkObjectManager.cs" />
     <Compile Include="Network\PacketHandler.cs" />
     <Compile Include="Network\SteamNetworkManager.cs" />
+    <Compile Include="Patches\BlEditorManagerPatches.cs" />
+    <Compile Include="Patches\MapSyncPatches.cs" />
+    <Compile Include="Patches\SelectionPatches.cs" />
+    <Compile Include="Patches\UIInteractionsPatches.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="UI\ConnectedUI.cs" />
     <Compile Include="UI\ConnectUI.cs" />
     <Compile Include="UI\MainUI.cs" />
     <Compile Include="UI\Styles.cs" />
-    <Compile Include="Core.cs" />
-    <Compile Include="Patches.cs" />
-    <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="UI\UIHosting.cs" />
-    <Compile Include="Behavior\WorldBuilderSync.cs" />
+    <Compile Include="Utility\CompressionUtil.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="!_0Harmony">
@@ -159,6 +171,10 @@
     </Reference>
     <Reference Include="UnityEngine.AssetBundleModule">
       <HintPath>C:\Program Files (x86)\Steam\steamapps\common\BROKE PROTOCOL\BrokeProtocol_Data\Managed\UnityEngine.AssetBundleModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AudioModule, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>C:\Program Files (x86)\Steam\steamapps\common\BROKE PROTOCOL\BrokeProtocol_Data\Managed\UnityEngine.AudioModule.dll</HintPath>
     </Reference>
     <Reference Include="UnityEngine.ClothModule">
       <HintPath>C:\Program Files (x86)\Steam\steamapps\common\BROKE PROTOCOL\BrokeProtocol_Data\Managed\UnityEngine.ClothModule.dll</HintPath>

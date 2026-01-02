@@ -1,6 +1,7 @@
 ﻿using ModLoader;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace WorldBuilderCoop.Network
 {
@@ -22,6 +23,14 @@ namespace WorldBuilderCoop.Network
                 ConsoleBase.WriteError("NetworkObject " + networkId + " already registered");
                 return;
             }
+            _networkObjects[networkId] = obj;
+            obj.NetworkId = networkId;
+            OnObjectRegistered?.Invoke(obj);
+        }
+
+        public void AddNetworkObject(NetworkObject obj)
+        {
+            int networkId = _networkObjects.Count > 0 ? _networkObjects.Keys.Max() + 1 : 1;
             _networkObjects[networkId] = obj;
             obj.NetworkId = networkId;
             OnObjectRegistered?.Invoke(obj);

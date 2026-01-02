@@ -1,4 +1,6 @@
-﻿using ModLoader;
+using ModLoader;
+using UnityEngine;
+using WorldBuilderCoop.Behavior;
 using WorldBuilderCoop.Events;
 using WorldBuilderCoop.Network;
 

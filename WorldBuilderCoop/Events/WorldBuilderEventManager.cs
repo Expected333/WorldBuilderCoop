@@ -1,4 +1,4 @@
-﻿using ModLoader;
+using ModLoader;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -12,6 +12,7 @@ namespace WorldBuilderCoop.Events
     {
         public int ObjectId { get; set; }
         public string PrefabPath { get; set; }
+        public int PrefabIndex { get; set; } = -1;
         public Vector3 Position { get; set; }
         public Quaternion Rotation { get; set; }
         public Vector3 Scale { get; set; }
@@ -72,12 +73,13 @@ namespace WorldBuilderCoop.Events
         }
 
         // ============ INVOKEURS ============
-        public void RaiseObjectPlaced(int objectId, string prefabPath, Vector3 position, Quaternion rotation, Vector3 scale)
+        public void RaiseObjectPlaced(int objectId, string prefabPath, Vector3 position, Quaternion rotation, Vector3 scale, int prefabIndex = -1)
         {
             OnObjectPlaced?.Invoke(this, new ObjectPlacedEventArgs
             {
                 ObjectId = objectId,
                 PrefabPath = prefabPath,
+                PrefabIndex = prefabIndex,
                 Position = position,
                 Rotation = rotation,
                 Scale = scale
@@ -160,7 +162,7 @@ namespace WorldBuilderCoop.Events
         {
             try
             {
-                byte[] data = SerializePlaceObject(e.Position, e.Rotation, e.Scale, e.ObjectId, e.PrefabPath);
+                byte[] data = SerializePlaceObject(e.Position, e.Rotation, e.Scale, e.ObjectId, e.PrefabPath, e.PrefabIndex);
                 SendPacket(data);
             }
             catch (Exception ex)
@@ -245,7 +247,7 @@ namespace WorldBuilderCoop.Events
         // SERIALIZATION METHODS
         // ═══════════════════════════════════════════
 
-        private byte[] SerializePlaceObject(Vector3 position, Quaternion rotation, Vector3 scale, int objectId, string prefabPath)
+        private byte[] SerializePlaceObject(Vector3 position, Quaternion rotation, Vector3 scale, int objectId, string prefabPath, int prefabIndex)
         {
             using (var ms = new MemoryStream())
             {
@@ -263,7 +265,17 @@ namespace WorldBuilderCoop.Events
                     writer.Write(scale.y);
                     writer.Write(scale.z);
                     writer.Write(objectId);
-                    writer.Write(prefabPath);
+                    
+                    bool hasPath = !string.IsNullOrEmpty(prefabPath);
+                    writer.Write(hasPath);
+                    if (hasPath)
+                    {
+                        writer.Write(prefabPath);
+                    }
+                    else
+                    {
+                        writer.Write(prefabIndex);
+                    }
 
                     return ms.ToArray();
                 }

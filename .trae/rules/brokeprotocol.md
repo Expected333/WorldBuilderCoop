@@ -1,0 +1,4 @@
+- do not add useless comments !
+- it is unity 6000 mono api
+- it is c# .net 4.7
+- it is a modding contexte

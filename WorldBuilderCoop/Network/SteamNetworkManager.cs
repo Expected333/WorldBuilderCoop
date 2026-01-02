@@ -1,20 +1,36 @@
-﻿using ModLoader;
+using BrokeProtocol.Client.Builder;
+using BrokeProtocol.Utility;
+using ModLoader;
 using Steamworks;
 using System;
 using System.Net.Sockets;
 using UnityEngine;
+using WorldBuilderCoop;
 using WorldBuilderCoop.Network;
 
 public class SteamNetworkManager : MonoBehaviour
 {
     public static SteamNetworkManager Instance;
 
+    private readonly System.Collections.Generic.Queue<Action> _mainThreadQueue = new System.Collections.Generic.Queue<Action>();
+    private readonly System.Collections.Generic.Queue<byte[]> _packetQueue = new System.Collections.Generic.Queue<byte[]>();
+    private bool _isLoadingMap = false;
+
     public CSteamID CurrentLobby { get; private set; }
     public CSteamID HostID { get; private set; }
+    private const int STEAM_CHANNEL = 2;
 
     private bool _isHostOverride = false;
     public bool IsHost => _isHostOverride;
-    public bool IsConnected => CurrentLobby.IsValid();
+    public bool IsConnected
+    {
+        get
+        {
+            if (_networkMode == NetworkMode.Local)
+                return _localNetwork != null && _localNetwork.IsConnected;
+            return CurrentLobby.IsValid();
+        }
+    }
 
     Callback<LobbyCreated_t> lobbyCreated;
     Callback<LobbyEnter_t> lobbyEntered;
@@ -49,8 +65,28 @@ public class SteamNetworkManager : MonoBehaviour
 
     void Update()
     {
+        lock (_mainThreadQueue)
+        {
+            while (_mainThreadQueue.Count > 0)
+            {
+                _mainThreadQueue.Dequeue()?.Invoke();
+            }
+        }
+
         if (_networkMode == NetworkMode.Steam)
+        {
+            SteamAPI.RunCallbacks();
             ReceivePackets();
+        }
+    }
+
+    public void RunOnMainThread(Action action)
+    {
+        if (action == null) return;
+        lock (_mainThreadQueue)
+        {
+            _mainThreadQueue.Enqueue(action);
+        }
     }
 
     public bool IsLocalMode() => _networkMode == NetworkMode.Local;
@@ -98,6 +134,7 @@ public class SteamNetworkManager : MonoBehaviour
             onSuccess: () =>
             {
                 ConsoleBase.WriteLine("[SteamNetwork] ✓ Connected to existing lobby");
+                SendPlayerJoinNotification();
                 StartCoroutine(ListenToHost());
             },
             onError: (error) =>
@@ -132,10 +169,40 @@ public class SteamNetworkManager : MonoBehaviour
     private void OnClientConnected(TcpClient client)
     {
         ConsoleBase.WriteLine("[SteamNetwork] ✓ Player joined lobby");
-        _localNetwork.ListenToClient(client, (data) =>
+
+        if (_networkMode == NetworkMode.Local)
         {
-            ApplyPacket(data);
+            RunOnMainThread(() => SendAllPlayersToLocalClient(client));
+        }
+
+        System.Threading.Tasks.Task.Run(() =>
+        {
+            _localNetwork.ListenToClient(client, (data) =>
+            {
+                RunOnMainThread(() => ApplyPacket(data));
+            });
         });
+    }
+
+    private void SendPlayerJoinNotification()
+    {
+        var camera = MonoBehaviourSingleton<BlSceneCamera>.Instance;
+        if (camera != null)
+        {
+            int userId = GetCurrentUserId();
+            int placeIndex = BrokeProtocol.Managers.SceneManager.Instance != null ? BrokeProtocol.Managers.SceneManager.Instance.currentPlace : 0;
+            byte[] data = PlayerSyncHelper.SerializePlayerSync(userId, camera.mTransform.position, camera.mTransform.rotation, placeIndex);
+            SendToAll(data);
+        }
+    }
+
+    private int GetCurrentUserId()
+    {
+        if (_networkMode == NetworkMode.Local)
+        {
+            return LocalUserManager.GetLocalUserId();
+        }
+        return SteamUser.GetSteamID().m_SteamID.GetHashCode();
     }
 
     private void InitializeSteamCallbacks()
@@ -175,9 +242,62 @@ public class SteamNetworkManager : MonoBehaviour
 
         if (changeType == EChatMemberStateChange.k_EChatMemberStateChangeEntered)
         {
-            ConsoleBase.WriteLine("[SteamNetwork] ✓ Player joined: " + new CSteamID(data.m_ulSteamIDUserChanged).m_SteamID);
+            CSteamID newPlayerId = new CSteamID(data.m_ulSteamIDUserChanged);
+            ConsoleBase.WriteLine("[SteamNetwork] ✓ Player joined: " + newPlayerId.m_SteamID);
+
+            if (newPlayerId != SteamUser.GetSteamID())
+            {
+                RunOnMainThread(() => SendMyInfoToSteamUser(newPlayerId));
+            }
+
             if (IsHost)
                 ConsoleBase.WriteLine("[SteamNetwork] Syncing map with new player");
+        }
+    }
+
+    private void SendMyInfoToSteamUser(CSteamID target)
+    {
+        var camera = MonoBehaviourSingleton<BlSceneCamera>.Instance;
+        if (camera != null)
+        {
+            int userId = GetCurrentUserId();
+            int placeIndex = BrokeProtocol.Managers.SceneManager.Instance != null ? BrokeProtocol.Managers.SceneManager.Instance.currentPlace : 0;
+            byte[] data = PlayerSyncHelper.SerializePlayerSync(userId, camera.mTransform.position, camera.mTransform.rotation, placeIndex);
+            ConsoleBase.WriteLine($"[SteamNetwork] Sending my info ({userId}) to new Steam player {target.m_SteamID}");
+            SteamNetworking.SendP2PPacket(target, data, (uint)data.Length, EP2PSend.k_EP2PSendReliable, STEAM_CHANNEL);
+        }
+    }
+
+    private void SendAllPlayersToLocalClient(TcpClient client)
+    {
+        try
+        {
+            // 1. Send Host (Self)
+            var camera = MonoBehaviourSingleton<BlSceneCamera>.Instance;
+            if (camera != null)
+            {
+                int userId = GetCurrentUserId();
+                int placeIndex = BrokeProtocol.Managers.SceneManager.Instance != null ? BrokeProtocol.Managers.SceneManager.Instance.currentPlace : 0;
+                byte[] data = PlayerSyncHelper.SerializePlayerSync(userId, camera.mTransform.position, camera.mTransform.rotation, placeIndex);
+                ConsoleBase.WriteLine($"[SteamNetwork] Sending Host info ({userId}) to new Local client");
+                _localNetwork.SendPacket(data, client.GetStream());
+            }
+
+            // 2. Send other known avatars (Existing Clients)
+            UserAvatar[] avatars = FindObjectsByType<UserAvatar>(FindObjectsSortMode.None);
+            foreach (var avatar in avatars)
+            {
+                if (avatar.UserId != GetCurrentUserId())
+                {
+                    byte[] data = PlayerSyncHelper.SerializePlayerSync(avatar.UserId, avatar.position, avatar.rotation, avatar.placeIndex);
+                    ConsoleBase.WriteLine($"[SteamNetwork] Sending existing player ({avatar.UserId}) to new Local client");
+                    _localNetwork.SendPacket(data, client.GetStream());
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ConsoleBase.WriteError($"[SteamNetwork] Error syncing players to new client: {ex.Message}");
         }
     }
 
@@ -189,6 +309,12 @@ public class SteamNetworkManager : MonoBehaviour
 
         ConsoleBase.WriteLine("[SteamNetwork] ✓ Entered lobby!");
         ConsoleBase.WriteLine("[SteamNetwork] Host ID: " + HostID.m_SteamID);
+
+        // Force accept P2P session with Host
+        ConsoleBase.WriteLine($"[SteamNetwork] Force Accepting P2P with Host: {HostID.m_SteamID}");
+        SteamNetworking.AcceptP2PSessionWithUser(HostID);
+
+        SendPlayerJoinNotification();
     }
 
     public void InviteFriends()
@@ -199,6 +325,7 @@ public class SteamNetworkManager : MonoBehaviour
 
     void OnP2PRequest(P2PSessionRequest_t req)
     {
+        ConsoleBase.WriteLine($"[SteamNetwork] Accepted P2P Request from {req.m_steamIDRemote}");
         SteamNetworking.AcceptP2PSessionWithUser(req.m_steamIDRemote);
     }
 
@@ -239,34 +366,35 @@ public class SteamNetworkManager : MonoBehaviour
             SendSteamToHost(data);
     }
 
-    private void SendSteamBroadcast(byte[] data)
+    private void SendSteamBroadcast(byte[] data, CSteamID excludeId = default(CSteamID))
     {
         int count = SteamMatchmaking.GetNumLobbyMembers(CurrentLobby);
         for (int i = 0; i < count; i++)
         {
             CSteamID member = SteamMatchmaking.GetLobbyMemberByIndex(CurrentLobby, i);
-            if (member != SteamUser.GetSteamID())
+            if (member != SteamUser.GetSteamID() && member != excludeId)
             {
-                SteamNetworking.SendP2PPacket(member, data, (uint)data.Length, EP2PSend.k_EP2PSendReliable);
+                SteamNetworking.SendP2PPacket(member, data, (uint)data.Length, EP2PSend.k_EP2PSendReliable, STEAM_CHANNEL);
             }
         }
     }
 
     private void SendSteamToHost(byte[] data)
     {
-        SteamNetworking.SendP2PPacket(HostID, data, (uint)data.Length, EP2PSend.k_EP2PSendReliable);
+        SteamNetworking.SendP2PPacket(HostID, data, (uint)data.Length, EP2PSend.k_EP2PSendReliable, STEAM_CHANNEL);
     }
 
     void ReceivePackets()
     {
         uint size;
-        while (SteamNetworking.IsP2PPacketAvailable(out size))
+        while (SteamNetworking.IsP2PPacketAvailable(out size, STEAM_CHANNEL))
         {
             byte[] buffer = new byte[size];
             CSteamID sender;
 
-            if (SteamNetworking.ReadP2PPacket(buffer, size, out size, out sender))
+            if (SteamNetworking.ReadP2PPacket(buffer, size, out size, out sender, STEAM_CHANNEL))
             {
+                ConsoleBase.WriteLine($"[SteamNetwork] RX Packet {buffer[0]} from {sender}");
                 HandlePacket(sender, buffer);
             }
         }
@@ -277,7 +405,7 @@ public class SteamNetworkManager : MonoBehaviour
         if (IsHost)
         {
             ApplyPacket(data);
-            SendSteamBroadcast(data);
+            SendSteamBroadcast(data, sender);
         }
         else if (sender == HostID)
         {
@@ -291,24 +419,41 @@ public class SteamNetworkManager : MonoBehaviour
 
         byte packetType = data[0];
 
+        // Auto-detect start of map load
+        if ((Packets)packetType == Packets.LoadMap)
+        {
+            if (!_isLoadingMap)
+            {
+                ConsoleBase.WriteLine("[SteamNetwork] Starting map download - Queueing subsequent packets");
+                _isLoadingMap = true;
+            }
+        }
+
+        // Queue packets if we are loading the map (except map data itself)
+        if (_isLoadingMap && (Packets)packetType != Packets.LoadMap && (Packets)packetType != Packets.LoadMapFinished)
+        {
+            _packetQueue.Enqueue(data);
+            return;
+        }
+
         try
         {
             switch ((Packets)packetType)
             {
                 case Packets.PlaceObject:
-                    PacketHandler.HandlePlaceObject(data, data.Length);
+                    PacketHandler.HandlePlaceObject(data);
                     break;
                 case Packets.RemoveObjects:
-                    PacketHandler.HandleRemoveObject(data, data.Length);
+                    PacketHandler.HandleRemoveObjects(data);
                     break;
                 case Packets.UpdateObjects:
-                    PacketHandler.HandleUpdateObject(data, data.Length);
+                    PacketHandler.HandleUpdateObject(data, data.Length);//
                     break;
                 case Packets.LoadMap:
                     PacketHandler.HandleLoadMap(data, data.Length);
                     break;
                 case Packets.PlayerSync:
-                    PacketHandler.HandlePlayerSync(data, data.Length);
+                    PacketHandler.HandlePlayerSync(data);
                     break;
                 case Packets.RemovePlayer:
                     PacketHandler.HandleRemovePlayer(data);
@@ -319,11 +464,41 @@ public class SteamNetworkManager : MonoBehaviour
                 case Packets.RemoveFromSelection:
                     PacketHandler.HandleRemoveFromSelection(data, data.Length);
                     break;
+                case Packets.LoadMapFinished:
+                    PacketHandler.HandleLoadMapFinished(data);
+                    break;
+                case Packets.Undo:
+                    PacketHandler.HandleUndo(data);
+                    break;
+                case Packets.Redo:
+                    PacketHandler.HandleRedo(data);
+                    break;
+                case Packets.Duplicate:
+                    PacketHandler.HandleDuplicate(data);
+                    break;
+                case Packets.SaveHistory:
+                    PacketHandler.HandleSaveHistory(data);
+                    break;
             }
         }
         catch (Exception ex)
         {
             ConsoleBase.WriteError($"[SteamNetwork] Packet error ({packetType}): {ex.Message}");
+        }
+    }
+
+    public void OnMapLoadCompleted()
+    {
+        if (_isLoadingMap)
+        {
+            _isLoadingMap = false;
+            ConsoleBase.WriteLine($"[SteamNetwork] Map load complete. Processing {_packetQueue.Count} queued packets.");
+
+            // Process all queued packets
+            while (_packetQueue.Count > 0)
+            {
+                ApplyPacket(_packetQueue.Dequeue());
+            }
         }
     }
 

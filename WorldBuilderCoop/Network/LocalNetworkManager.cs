@@ -1,4 +1,4 @@
-﻿using ModLoader;
+using ModLoader;
 using System;
 using System.Collections.Generic;
 using System.Net;
@@ -12,6 +12,7 @@ namespace WorldBuilderCoop.Network
         private TcpClient _tcpClient;
         private NetworkStream _networkStream;
         private List<TcpClient> _connectedClients = new List<TcpClient>();
+        private readonly object _clientsLock = new object();
         private const int LocalPort = 7777;
 
         public bool IsConnected { get; private set; }
@@ -85,7 +86,10 @@ namespace WorldBuilderCoop.Network
 
         public void ListenToClient(TcpClient client, Action<byte[]> onPacketReceived)
         {
-            _connectedClients.Add(client);
+            lock (_clientsLock)
+            {
+                _connectedClients.Add(client);
+            }
             var stream = client.GetStream();
             ConsoleBase.WriteLine("[LocalNetwork] Started listening to client");
 
@@ -124,7 +128,10 @@ namespace WorldBuilderCoop.Network
             }
 
             ConsoleBase.WriteLine("[LocalNetwork] Stopped listening to client");
-            _connectedClients.Remove(client);
+            lock (_clientsLock)
+            {
+                _connectedClients.Remove(client);
+            }
             stream?.Close();
             client?.Close();
         }
@@ -143,7 +150,12 @@ namespace WorldBuilderCoop.Network
 
         private void BroadcastToOthers(byte[] data, TcpClient sender)
         {
-            foreach (var client in _connectedClients)
+            TcpClient[] clientsSnapshot;
+            lock (_clientsLock)
+            {
+                clientsSnapshot = _connectedClients.ToArray();
+            }
+            foreach (var client in clientsSnapshot)
             {
                 if (client != sender && client.Connected)
                 {
@@ -165,8 +177,13 @@ namespace WorldBuilderCoop.Network
 
             if (isHost)
             {
-                ConsoleBase.WriteLine($"[LocalNetwork] Broadcasting to {_connectedClients.Count} clients");
-                foreach (var client in _connectedClients)
+                TcpClient[] clientsSnapshot;
+                lock (_clientsLock)
+                {
+                    clientsSnapshot = _connectedClients.ToArray();
+                }
+                ConsoleBase.WriteLine($"[LocalNetwork] Broadcasting to {clientsSnapshot.Length} clients");
+                foreach (var client in clientsSnapshot)
                 {
                     try
                     {
@@ -203,9 +220,12 @@ namespace WorldBuilderCoop.Network
             try
             {
                 byte[] sizeBytes = BitConverter.GetBytes(data.Length);
-                targetStream.Write(sizeBytes, 0, 4);
-                targetStream.Write(data, 0, data.Length);
-                targetStream.Flush();
+                lock (targetStream)
+                {
+                    targetStream.Write(sizeBytes, 0, 4);
+                    targetStream.Write(data, 0, data.Length);
+                    targetStream.Flush();
+                }
                 ConsoleBase.WriteLine($"[LocalNetwork] Packet sent successfully - Size: {data.Length}");
             }
             catch (Exception ex)
@@ -258,11 +278,14 @@ namespace WorldBuilderCoop.Network
             _tcpClient?.Close();
             _tcpListener?.Stop();
 
-            foreach (var client in _connectedClients)
+            lock (_clientsLock)
             {
-                try { client?.Close(); } catch { }
+                foreach (var client in _connectedClients)
+                {
+                    try { client?.Close(); } catch { }
+                }
+                _connectedClients.Clear();
             }
-            _connectedClients.Clear();
         }
     }
 }
