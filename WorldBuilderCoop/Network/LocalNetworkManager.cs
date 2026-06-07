@@ -129,6 +129,8 @@ namespace WorldBuilderCoop.Network
             }
             stream?.Close();
             client?.Close();
+
+            onDisconnect?.Invoke();
         }
 
         private int ReadFullBuffer(NetworkStream stream, byte[] buffer, int size)

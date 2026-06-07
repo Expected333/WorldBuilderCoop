@@ -15,6 +15,9 @@ public class SteamNetworkManager : MonoBehaviour
 
     private readonly System.Collections.Generic.Queue<Action> _mainThreadQueue = new System.Collections.Generic.Queue<Action>();
     private readonly System.Collections.Generic.Queue<byte[]> _packetQueue = new System.Collections.Generic.Queue<byte[]>();
+    // Mode local : associe chaque connexion TCP à l'userId du joueur (sniffé via PlayerSync),
+    // pour nettoyer avatar + verrous à la déconnexion.
+    private readonly System.Collections.Generic.Dictionary<TcpClient, int> _localClientUserIds = new System.Collections.Generic.Dictionary<TcpClient, int>();
     private bool _isLoadingMap = false;
 
     public CSteamID CurrentLobby { get; private set; }
@@ -193,11 +196,37 @@ public class SteamNetworkManager : MonoBehaviour
 
         System.Threading.Tasks.Task.Run(() =>
         {
-            _localNetwork.ListenToClient(client, (data) =>
-            {
-                RunOnMainThread(() => ApplyPacket(data));
-            });
+            _localNetwork.ListenToClient(client,
+                (data) =>
+                {
+                    // Sniff l'userId depuis les PlayerSync pour associer connexion → joueur,
+                    // afin de pouvoir nettoyer (avatar + verrous) à la déconnexion.
+                    if (data.Length >= 5 && data[0] == (byte)Packets.PlayerSync)
+                    {
+                        int uid = BitConverter.ToInt32(data, 1);
+                        lock (_localClientUserIds) { _localClientUserIds[client] = uid; }
+                    }
+                    RunOnMainThread(() => ApplyPacket(data));
+                },
+                () => RunOnMainThread(() => OnLocalClientDisconnected(client)));
         });
+    }
+
+    private void OnLocalClientDisconnected(TcpClient client)
+    {
+        int uid;
+        bool found;
+        lock (_localClientUserIds)
+        {
+            found = _localClientUserIds.TryGetValue(client, out uid);
+            if (found) _localClientUserIds.Remove(client);
+        }
+        if (!found) return;
+
+        WbLog.Info($"[SteamNetwork] Local client {uid} disconnected");
+        PlayerSyncHelper.RemoveUser(uid);
+        // Prévient les autres clients pour qu'ils nettoient aussi leur vue.
+        SendToAllExcept(client, PlayerSyncHelper.SerializeRemovePlayer(uid));
     }
 
     private void SendPlayerJoinNotification()

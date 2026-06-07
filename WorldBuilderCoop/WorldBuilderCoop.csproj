@@ -108,14 +108,14 @@
     </Reference>
     <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\BROKE PROTOCOL\BrokeProtocol_Data\Managed\Newtonsoft.Json.dll</HintPath>
+      <HintPath>C:\Program Files (x86)\Steam\steamapps\common\BROKE PROTOCOL\BrokeProtocol_Data\Managed\Newtonsoft.Json.dll</HintPath>
     </Reference>
     <Reference Include="Scripts">
       <HintPath>C:\Program Files (x86)\Steam\steamapps\common\BROKE PROTOCOL\BrokeProtocol_Data\Managed\Scripts.dll</HintPath>
     </Reference>
     <Reference Include="Steamworks.NET, Version=20.2.0.0, Culture=neutral, processorArchitecture=AMD64">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\BROKE PROTOCOL\BrokeProtocol_Data\Managed\Steamworks.NET.dll</HintPath>
+      <HintPath>C:\Program Files (x86)\Steam\steamapps\common\BROKE PROTOCOL\BrokeProtocol_Data\Managed\Steamworks.NET.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Collections" />

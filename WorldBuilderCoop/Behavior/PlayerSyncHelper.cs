@@ -30,6 +30,17 @@ namespace WorldBuilderCoop
             }
         }
 
+        public static byte[] SerializeRemovePlayer(int userId)
+        {
+            using (var ms = new MemoryStream())
+            using (var writer = new BinaryWriter(ms))
+            {
+                writer.Write((byte)Packets.RemovePlayer);
+                writer.Write(userId);
+                return ms.ToArray();
+            }
+        }
+
         public static void userSync(int userId, Vector3 position, Quaternion rotation, int placeIndex)
         {
             // Lookup O(1) via le registre au lieu d'un FindObjectsByType par paquet (~20/s/joueur).

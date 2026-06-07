@@ -1,0 +1,68 @@
+name: Release
+
+# Déclenché par un tag "vX.Y.Z" poussé par publish.ps1.
+# Le mod est compilé en LOCAL (seul endroit où les DLL du jeu sont disponibles) ;
+# le .dll est committé dans dist/. Ce workflow se contente de créer la GitHub
+# Release avec ce .dll en asset — c'est ce que le BP-Mods-Registry consomme.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      # Optionnel : si tu ajoutes un secret REGISTRY_DISPATCH_TOKEN (PAT avec
+      # accès au repo BP-Mods-Registry), l'index est rafraîchi immédiatement.
+      # Sinon, le registry se met à jour tout seul dans l'heure (cron).
+      REG_TOKEN: ${{ secrets.REGISTRY_DISPATCH_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Vérifier l'asset compilé
+        run: |
+          if [ ! -f dist/WorldBuilderCoop.dll ]; then
+            echo "::error::dist/WorldBuilderCoop.dll introuvable. Lance ./publish.ps1 -Version X.Y.Z en local."
+            exit 1
+          fi
+          ls -l dist/WorldBuilderCoop.dll
+
+      - name: Lire la version depuis mod.json
+        id: meta
+        run: echo "version=$(node -p "require('./mod.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Vérifier la cohérence tag / mod.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          mod="${{ steps.meta.outputs.version }}"
+          if [ "$tag" != "$mod" ]; then
+            echo "::warning::Le tag ($tag) diffère de mod.json ($mod). Le registry utilisera $mod."
+          fi
+
+      - name: Créer la GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: WorldBuilderCoop ${{ github.ref_name }}
+          body: |
+            Release automatique de **WorldBuilderCoop v${{ steps.meta.outputs.version }}**.
+
+            Installation : via le ModLoader ou le [BP Mods Registry](https://expected333.github.io/BP-Mods-Registry/).
+          files: dist/WorldBuilderCoop.dll
+          fail_on_unmatched_files: true
+
+      - name: Rafraîchir le registry (si token fourni)
+        if: env.REG_TOKEN != ''
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer $REG_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/Expected333/BP-Mods-Registry/actions/workflows/build-index.yml/dispatches \
+            -d '{"ref":"main"}' \
+          && echo "Registry notifié." || echo "::warning::Dispatch registry échoué (le cron horaire prendra le relais)."
