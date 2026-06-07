@@ -1,0 +1,11 @@
+{
+  "name": "WorldBuilderCoop",
+  "version": "1.0.0",
+  "author": "Expected333",
+  "description": "Ajoute le multijoueur coopératif dans le World Builder de Broke Protocol. Hébergez ou rejoignez une session via Steam.",
+  "dll_asset_pattern": "WorldBuilderCoop.dll",
+  "dependencies": [],
+  "min_modloader_version": "1.0.0",
+  "homepage": "https://github.com/Expected333/WorldBuilderCoop",
+  "tags": ["multiplayer", "builder", "coop", "steam"]
+}

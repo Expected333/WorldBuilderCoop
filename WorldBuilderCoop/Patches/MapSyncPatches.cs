@@ -4,6 +4,7 @@ using ModLoader;
 using System.Collections;
 using UnityEngine;
 using WorldBuilderCoop.Managers;
+using WorldBuilderCoop.Network;
 
 namespace WorldBuilderCoop.Patches
 {
@@ -30,7 +31,7 @@ namespace WorldBuilderCoop.Patches
             if (SteamNetworkManager.Instance != null && SteamNetworkManager.Instance.IsConnected && SteamNetworkManager.Instance.IsHost)
             {
                 WaitingForProcessMap = true;
-                ConsoleBase.WriteLine("[Host] Map load initiated. Waiting for ProcessMap to finalize...");
+                WbLog.Debug("[Host] Map load initiated. Waiting for ProcessMap to finalize...");
             }
         }
     }
@@ -54,12 +55,14 @@ namespace WorldBuilderCoop.Patches
         {
             yield return null;
 
-            ConsoleBase.WriteLine("[Host] ProcessMap finished. Serializing map...");
+            WbLog.Debug("[Host] ProcessMap finished. Serializing map...");
+            
             var dataToSend = MapManager.SerializeLevel(false);
 
-            ConsoleBase.WriteLine("[Host] Sending map to clients...");
+            WbLog.Debug("[Host] Sending map to clients...");
             yield return MapManager.SendMapToClients(dataToSend);
-            ConsoleBase.WriteLine("[Host] Map Sync Completed.");
+            
+            WbLog.Debug("[Host] Map Sync Completed.");
         }
     }
 }

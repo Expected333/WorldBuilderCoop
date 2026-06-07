@@ -1,4 +1,4 @@
-﻿using BrokeProtocol.Managers;
+using BrokeProtocol.Managers;
 using ModLoader;
 using Steamworks;
 using UnityEngine;
@@ -71,10 +71,10 @@ namespace WorldBuilderCoop.UI
             if (ulong.TryParse(inputValue, out ulong lobbyIdValue))
             {
                 CSteamID lobbyId = new CSteamID(lobbyIdValue);
-                ConsoleBase.WriteLine("[WorldBuilder] Attempting to join lobby: " + inputValue);
+                WbLog.Debug("[WorldBuilder] Attempting to join lobby: " + inputValue);
 
                 SteamAPICall_t apiCall = SteamMatchmaking.JoinLobby(lobbyId);
-                ConsoleBase.WriteLine("[WorldBuilder] JoinLobby called - waiting for callback...");
+                WbLog.Debug("[WorldBuilder] JoinLobby called - waiting for callback...");
 
                 ConnectedUI.createDisconnectBtn(sceneManager);
             }

@@ -6,6 +6,7 @@ using System;
 using System.Net.Sockets;
 using UnityEngine;
 using WorldBuilderCoop;
+using WorldBuilderCoop.Managers;
 using WorldBuilderCoop.Network;
 
 public class SteamNetworkManager : MonoBehaviour
@@ -21,7 +22,14 @@ public class SteamNetworkManager : MonoBehaviour
     private const int STEAM_CHANNEL = 2;
 
     private bool _isHostOverride = false;
-    public bool IsHost => _isHostOverride;
+    public bool IsHost
+    {
+        get
+        {
+            if (_networkMode == NetworkMode.Local) return _isHostOverride;
+            return _isHostOverride || (HostID.IsValid() && HostID == SteamUser.GetSteamID());
+        }
+    }
     public bool IsConnected
     {
         get
@@ -55,7 +63,7 @@ public class SteamNetworkManager : MonoBehaviour
     void Start()
     {
         _networkMode = NetworkMode.Local;
-        ConsoleBase.WriteLine("[SteamNetwork] Waiting for mode selection from UI...");
+        WbLog.Debug("[SteamNetwork] Waiting for mode selection from UI...");
     }
 
     void OnDestroy()
@@ -102,14 +110,14 @@ public class SteamNetworkManager : MonoBehaviour
         }
         else
         {
-            ConsoleBase.WriteLine("[SteamNetwork] Switching to STEAM mode");
+            WbLog.Info("[SteamNetwork] Switching to STEAM mode");
             InitializeSteamCallbacks();
         }
     }
 
     private void InitializeLocalMode()
     {
-        ConsoleBase.WriteLine("[SteamNetwork] Switching to LOCAL mode");
+        WbLog.Info("[SteamNetwork] Switching to LOCAL mode");
         CurrentLobby = new CSteamID(999);
 
         bool hostStarted = _localNetwork.TryStartHost(OnClientConnected);
@@ -117,13 +125,13 @@ public class SteamNetworkManager : MonoBehaviour
         if (hostStarted)
         {
             _isHostOverride = true;
-            ConsoleBase.WriteLine("[SteamNetwork] I am: HOST");
-            ConsoleBase.WriteLine("[SteamNetwork] ✓ Lobby created (host)");
+            WbLog.Info("[SteamNetwork] I am: HOST");
+            WbLog.Debug("[SteamNetwork] ✓ Lobby created (host)");
         }
         else
         {
             _isHostOverride = false;
-            ConsoleBase.WriteLine("[SteamNetwork] I am: CLIENT");
+            WbLog.Info("[SteamNetwork] I am: CLIENT");
             StartAsClient();
         }
     }
@@ -133,7 +141,7 @@ public class SteamNetworkManager : MonoBehaviour
         _localNetwork.StartClient(
             onSuccess: () =>
             {
-                ConsoleBase.WriteLine("[SteamNetwork] ✓ Connected to existing lobby");
+                WbLog.Info("[SteamNetwork] ✓ Connected to existing lobby");
                 SendPlayerJoinNotification();
                 StartCoroutine(ListenToHost());
             },
@@ -150,10 +158,18 @@ public class SteamNetworkManager : MonoBehaviour
         {
             try
             {
-                byte[] packet = _localNetwork.ReceivePacket();
-                if (packet != null && packet.Length > 0)
+                // Process multiple packets per frame to drain buffer
+                int processed = 0;
+                while (processed < 200)
                 {
-                    ApplyPacket(packet);
+                    byte[] packet = _localNetwork.ReceivePacket();
+                    if (packet == null) break;
+
+                    if (packet.Length > 0)
+                    {
+                        ApplyPacket(packet);
+                    }
+                    processed++;
                 }
             }
             catch (System.Exception ex)
@@ -162,13 +178,13 @@ public class SteamNetworkManager : MonoBehaviour
                 break;
             }
 
-            yield return new WaitForSeconds(0.01f);
+            yield return null;
         }
     }
 
     private void OnClientConnected(TcpClient client)
     {
-        ConsoleBase.WriteLine("[SteamNetwork] ✓ Player joined lobby");
+        WbLog.Info("[SteamNetwork] ✓ Player joined lobby");
 
         if (_networkMode == NetworkMode.Local)
         {
@@ -196,14 +212,7 @@ public class SteamNetworkManager : MonoBehaviour
         }
     }
 
-    private int GetCurrentUserId()
-    {
-        if (_networkMode == NetworkMode.Local)
-        {
-            return LocalUserManager.GetLocalUserId();
-        }
-        return SteamUser.GetSteamID().m_SteamID.GetHashCode();
-    }
+    private int GetCurrentUserId() => WorldBuilderCoop.Network.NetworkIdentity.GetUserId();
 
     private void InitializeSteamCallbacks()
     {
@@ -232,8 +241,8 @@ public class SteamNetworkManager : MonoBehaviour
         HostID = SteamUser.GetSteamID();
         _isHostOverride = true;
 
-        ConsoleBase.WriteLine("[SteamNetwork] ✓ Lobby created successfully!");
-        ConsoleBase.WriteLine("[SteamNetwork] Lobby ID: " + CurrentLobby.m_SteamID);
+        WbLog.Info("[SteamNetwork] ✓ Lobby created successfully!");
+        WbLog.Debug("[SteamNetwork] Lobby ID: " + CurrentLobby.m_SteamID);
     }
 
     void OnLobbyChatUpdate(LobbyChatUpdate_t data)
@@ -243,7 +252,7 @@ public class SteamNetworkManager : MonoBehaviour
         if (changeType == EChatMemberStateChange.k_EChatMemberStateChangeEntered)
         {
             CSteamID newPlayerId = new CSteamID(data.m_ulSteamIDUserChanged);
-            ConsoleBase.WriteLine("[SteamNetwork] ✓ Player joined: " + newPlayerId.m_SteamID);
+            WbLog.Debug("[SteamNetwork] ✓ Player joined: " + newPlayerId.m_SteamID);
 
             if (newPlayerId != SteamUser.GetSteamID())
             {
@@ -251,7 +260,22 @@ public class SteamNetworkManager : MonoBehaviour
             }
 
             if (IsHost)
-                ConsoleBase.WriteLine("[SteamNetwork] Syncing map with new player");
+            {
+                WbLog.Debug("[SteamNetwork] Syncing map with new player");
+                StartCoroutine(MapManager.SendMapToClient(newPlayerId));
+            }
+        }
+        else if ((changeType & (EChatMemberStateChange.k_EChatMemberStateChangeLeft
+                              | EChatMemberStateChange.k_EChatMemberStateChangeDisconnected
+                              | EChatMemberStateChange.k_EChatMemberStateChangeKicked
+                              | EChatMemberStateChange.k_EChatMemberStateChangeBanned)) != 0)
+        {
+            // Un joueur a quitté : on retire son avatar et on relâche ses verrous de sélection.
+            // Chaque membre reçoit cet update et nettoie sa propre vue (pas besoin de broadcast).
+            CSteamID goneId = new CSteamID(data.m_ulSteamIDUserChanged);
+            int userId = goneId.m_SteamID.GetHashCode();
+            WbLog.Info("[SteamNetwork] Player left: " + goneId.m_SteamID);
+            RunOnMainThread(() => PlayerSyncHelper.RemoveUser(userId));
         }
     }
 
@@ -263,7 +287,7 @@ public class SteamNetworkManager : MonoBehaviour
             int userId = GetCurrentUserId();
             int placeIndex = BrokeProtocol.Managers.SceneManager.Instance != null ? BrokeProtocol.Managers.SceneManager.Instance.currentPlace : 0;
             byte[] data = PlayerSyncHelper.SerializePlayerSync(userId, camera.mTransform.position, camera.mTransform.rotation, placeIndex);
-            ConsoleBase.WriteLine($"[SteamNetwork] Sending my info ({userId}) to new Steam player {target.m_SteamID}");
+            WbLog.Debug($"[SteamNetwork] Sending my info ({userId}) to new Steam player {target.m_SteamID}");
             SteamNetworking.SendP2PPacket(target, data, (uint)data.Length, EP2PSend.k_EP2PSendReliable, STEAM_CHANNEL);
         }
     }
@@ -279,20 +303,28 @@ public class SteamNetworkManager : MonoBehaviour
                 int userId = GetCurrentUserId();
                 int placeIndex = BrokeProtocol.Managers.SceneManager.Instance != null ? BrokeProtocol.Managers.SceneManager.Instance.currentPlace : 0;
                 byte[] data = PlayerSyncHelper.SerializePlayerSync(userId, camera.mTransform.position, camera.mTransform.rotation, placeIndex);
-                ConsoleBase.WriteLine($"[SteamNetwork] Sending Host info ({userId}) to new Local client");
+                WbLog.Debug($"[SteamNetwork] Sending Host info ({userId}) to new Local client");
                 _localNetwork.SendPacket(data, client.GetStream());
             }
 
-            // 2. Send other known avatars (Existing Clients)
-            UserAvatar[] avatars = FindObjectsByType<UserAvatar>(FindObjectsSortMode.None);
-            foreach (var avatar in avatars)
+            // 2. Send other known avatars (Existing Clients) — depuis le registre,
+            //    avec la position courante (transform) plutôt que la position de création.
+            int selfId = GetCurrentUserId();
+            foreach (var avatar in WorldBuilderCoop.Core.networkObjectManager.GetAllUserAvatars())
             {
-                if (avatar.UserId != GetCurrentUserId())
+                if (avatar.UserId != selfId)
                 {
-                    byte[] data = PlayerSyncHelper.SerializePlayerSync(avatar.UserId, avatar.position, avatar.rotation, avatar.placeIndex);
-                    ConsoleBase.WriteLine($"[SteamNetwork] Sending existing player ({avatar.UserId}) to new Local client");
+                    byte[] data = PlayerSyncHelper.SerializePlayerSync(avatar.UserId, avatar.transform.position, avatar.transform.rotation, avatar.placeIndex);
+                    WbLog.Debug($"[SteamNetwork] Sending existing player ({avatar.UserId}) to new Local client");
                     _localNetwork.SendPacket(data, client.GetStream());
                 }
+            }
+
+            // 3. Sync Map
+            if (IsHost)
+            {
+                WbLog.Debug("[SteamNetwork] Syncing map with new Local client");
+                StartCoroutine(MapManager.SendMapToClient(client));
             }
         }
         catch (Exception ex)
@@ -305,13 +337,23 @@ public class SteamNetworkManager : MonoBehaviour
     {
         CurrentLobby = new CSteamID(data.m_ulSteamIDLobby);
         HostID = SteamMatchmaking.GetLobbyOwner(CurrentLobby);
-        _isHostOverride = false;
 
-        ConsoleBase.WriteLine("[SteamNetwork] ✓ Entered lobby!");
-        ConsoleBase.WriteLine("[SteamNetwork] Host ID: " + HostID.m_SteamID);
+        // Fix: Check if we are the owner
+        if (HostID == SteamUser.GetSteamID())
+        {
+            _isHostOverride = true;
+            WbLog.Info("[SteamNetwork] I am the Host (Lobby Owner)");
+        }
+        else
+        {
+            _isHostOverride = false;
+        }
+
+        WbLog.Info("[SteamNetwork] ✓ Entered lobby!");
+        WbLog.Debug("[SteamNetwork] Host ID: " + HostID.m_SteamID);
 
         // Force accept P2P session with Host
-        ConsoleBase.WriteLine($"[SteamNetwork] Force Accepting P2P with Host: {HostID.m_SteamID}");
+        WbLog.Debug($"[SteamNetwork] Force Accepting P2P with Host: {HostID.m_SteamID}");
         SteamNetworking.AcceptP2PSessionWithUser(HostID);
 
         SendPlayerJoinNotification();
@@ -325,7 +367,7 @@ public class SteamNetworkManager : MonoBehaviour
 
     void OnP2PRequest(P2PSessionRequest_t req)
     {
-        ConsoleBase.WriteLine($"[SteamNetwork] Accepted P2P Request from {req.m_steamIDRemote}");
+        WbLog.Debug($"[SteamNetwork] Accepted P2P Request from {req.m_steamIDRemote}");
         SteamNetworking.AcceptP2PSessionWithUser(req.m_steamIDRemote);
     }
 
@@ -337,21 +379,21 @@ public class SteamNetworkManager : MonoBehaviour
             return;
         }
 
-        ConsoleBase.WriteLine($"[SteamNetwork] SendToAll called - Mode: {_networkMode}, PacketType: {data[0]}");
+        WbLog.Debug($"[SteamNetwork] SendToAll called - Mode: {_networkMode}, PacketType: {data[0]}");
 
         if (_networkMode == NetworkMode.Local)
         {
-            ConsoleBase.WriteLine("[SteamNetwork] Sending via LOCAL network");
+            WbLog.Debug("[SteamNetwork] Sending via LOCAL network");
             _localNetwork.SendToAll(data, IsHost);
         }
         else if (IsHost)
         {
-            ConsoleBase.WriteLine("[SteamNetwork] Sending via STEAM (Host broadcast)");
+            WbLog.Debug("[SteamNetwork] Sending via STEAM (Host broadcast)");
             SendSteamBroadcast(data);
         }
         else
         {
-            ConsoleBase.WriteLine("[SteamNetwork] Sending via STEAM (Client to Host)");
+            WbLog.Debug("[SteamNetwork] Sending via STEAM (Client to Host)");
             SendSteamToHost(data);
         }
     }
@@ -364,6 +406,45 @@ public class SteamNetworkManager : MonoBehaviour
             _localNetwork.SendToHost(data);
         else
             SendSteamToHost(data);
+    }
+
+    public void SendTo(CSteamID target, byte[] data)
+    {
+        if (_networkMode == NetworkMode.Steam)
+        {
+            SteamNetworking.SendP2PPacket(target, data, (uint)data.Length, EP2PSend.k_EP2PSendReliable, STEAM_CHANNEL);
+        }
+    }
+
+    public void SendTo(TcpClient target, byte[] data)
+    {
+        if (_networkMode == NetworkMode.Local && _localNetwork != null)
+        {
+            try
+            {
+                _localNetwork.SendPacket(data, target.GetStream());
+            }
+            catch (Exception ex)
+            {
+                ConsoleBase.WriteError($"[SteamNetwork] SendTo Local Error: {ex.Message}");
+            }
+        }
+    }
+
+    public void SendToAllExcept(CSteamID exclude, byte[] data)
+    {
+        if (_networkMode == NetworkMode.Steam)
+        {
+            SendSteamBroadcast(data, exclude);
+        }
+    }
+
+    public void SendToAllExcept(TcpClient exclude, byte[] data)
+    {
+        if (_networkMode == NetworkMode.Local && _localNetwork != null)
+        {
+            _localNetwork.BroadcastToOthers(data, exclude);
+        }
     }
 
     private void SendSteamBroadcast(byte[] data, CSteamID excludeId = default(CSteamID))
@@ -394,7 +475,7 @@ public class SteamNetworkManager : MonoBehaviour
 
             if (SteamNetworking.ReadP2PPacket(buffer, size, out size, out sender, STEAM_CHANNEL))
             {
-                ConsoleBase.WriteLine($"[SteamNetwork] RX Packet {buffer[0]} from {sender}");
+                WbLog.Debug($"[SteamNetwork] RX Packet {buffer[0]} from {sender}");
                 HandlePacket(sender, buffer);
             }
         }
@@ -411,6 +492,10 @@ public class SteamNetworkManager : MonoBehaviour
         {
             ApplyPacket(data);
         }
+        else
+        {
+            WbLog.Debug($"[SteamNetwork] Ignored packet from {sender} (IsHost={IsHost}, HostID={HostID})");
+        }
     }
 
     void ApplyPacket(byte[] data)
@@ -424,7 +509,7 @@ public class SteamNetworkManager : MonoBehaviour
         {
             if (!_isLoadingMap)
             {
-                ConsoleBase.WriteLine("[SteamNetwork] Starting map download - Queueing subsequent packets");
+                WbLog.Info("[SteamNetwork] Starting map download - Queueing subsequent packets");
                 _isLoadingMap = true;
             }
         }
@@ -448,6 +533,9 @@ public class SteamNetworkManager : MonoBehaviour
                     break;
                 case Packets.UpdateObjects:
                     PacketHandler.HandleUpdateObject(data, data.Length);//
+                    break;
+                case Packets.UpdateComponent:
+                    PacketHandler.HandleUpdateComponent(data);
                     break;
                 case Packets.LoadMap:
                     PacketHandler.HandleLoadMap(data, data.Length);
@@ -479,6 +567,18 @@ public class SteamNetworkManager : MonoBehaviour
                 case Packets.SaveHistory:
                     PacketHandler.HandleSaveHistory(data);
                     break;
+                case Packets.BatchAddToSelection:
+                    PacketHandler.HandleBatchAddToSelection(data);
+                    break;
+                case Packets.DuplicateSelection:
+                    PacketHandler.HandleDuplicateSelection(data);
+                    break;
+                case Packets.StartMapSync:
+                    PacketHandler.HandleStartMapSync(data);
+                    break;
+                case Packets.EndMapSync:
+                    PacketHandler.HandleEndMapSync(data);
+                    break;
             }
         }
         catch (Exception ex)
@@ -492,7 +592,7 @@ public class SteamNetworkManager : MonoBehaviour
         if (_isLoadingMap)
         {
             _isLoadingMap = false;
-            ConsoleBase.WriteLine($"[SteamNetwork] Map load complete. Processing {_packetQueue.Count} queued packets.");
+            WbLog.Info($"[SteamNetwork] Map load complete. Processing {_packetQueue.Count} queued packets.");
 
             // Process all queued packets
             while (_packetQueue.Count > 0)

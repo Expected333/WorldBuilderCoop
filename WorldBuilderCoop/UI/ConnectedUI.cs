@@ -1,4 +1,4 @@
-﻿using BrokeProtocol.Managers;
+using BrokeProtocol.Managers;
 using ModLoader;
 using Steamworks;
 using UnityEngine;
@@ -49,12 +49,12 @@ namespace WorldBuilderCoop.UI
                 if (isLocalMode)
                 {
                     SteamNetworkManager.Instance.DisconnectLocal();
-                    ConsoleBase.WriteLine("[WorldBuilder] Disconnected from local lobby");
+                    WbLog.Debug("[WorldBuilder] Disconnected from local lobby");
                 }
                 else if (SteamNetworkManager.Instance.IsConnected)
                 {
                     SteamMatchmaking.LeaveLobby(SteamNetworkManager.Instance.CurrentLobby);
-                    ConsoleBase.WriteLine("[WorldBuilder] Disconnected from Steam lobby");
+                    WbLog.Debug("[WorldBuilder] Disconnected from Steam lobby");
                 }
             }
 
@@ -68,7 +68,7 @@ namespace WorldBuilderCoop.UI
             {
                 string lobbyId = SteamNetworkManager.Instance.CurrentLobby.m_SteamID.ToString();
                 GUIUtility.systemCopyBuffer = lobbyId;
-                ConsoleBase.WriteLine("[WorldBuilder] Lobby ID copied to clipboard: " + lobbyId);
+                WbLog.Debug("[WorldBuilder] Lobby ID copied to clipboard: " + lobbyId);
             }
             else
             {

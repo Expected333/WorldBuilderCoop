@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using WorldBuilderCoop.Events;
 using WorldBuilderCoop.Network;
+using WorldBuilderCoop.Managers;
 
 namespace WorldBuilderCoop.Patches
 {
@@ -27,7 +28,7 @@ namespace WorldBuilderCoop.Patches
 
             if (__instance != null)
             {
-                ConsoleBase.WriteLine(__instance);
+                WbLog.Debug(__instance);
                 __instance.StartCoroutine(ApplyBuilderThemeDelayed(__instance));
             }
         }
@@ -41,19 +42,22 @@ namespace WorldBuilderCoop.Patches
             }
             catch (System.Exception ex)
             {
-                ConsoleBase.WriteLine("[WorldBuilder] WB_Patch delayed error: " + ex.Message);
+                WbLog.Debug("[WorldBuilder] WB_Patch delayed error: " + ex.Message);
             }
         }
     }
 
-    [HarmonyPatch(typeof(BlEditorManager), "AppendHistory")]
-    public class BlEditorManagerAppendHistory_Patch
+    // Associe chaque snapshot d'historique du jeu à la liste ordonnée des NetworkId.
+    // SerializeLevel(checkSave:false) est l'appel utilisé par AppendHistory pour produire un snapshot.
+    [HarmonyPatch(typeof(BrokeProtocol.Managers.SceneManager), "SerializeLevel")]
+    public class SceneManagerSerializeLevel_Patch
     {
-        public static void Postfix(BlEditorManager __instance, bool undone)
+        public static void Postfix(bool checkSave, List<BaseParameters> __result)
         {
+            if (checkSave) return; // snapshots d'historique = checkSave:false
             if (WorldBuilderCoop.Behavior.WorldBuilderHistoryManager.Instance != null)
             {
-                WorldBuilderCoop.Behavior.WorldBuilderHistoryManager.Instance.RecordState(__instance, undone);
+                WorldBuilderCoop.Behavior.WorldBuilderHistoryManager.Instance.AssociateSnapshot(__result);
             }
         }
     }
@@ -63,17 +67,15 @@ namespace WorldBuilderCoop.Patches
     {
         public static void Prefix()
         {
-            if (Core.networkObjectManager != null)
-            {
-                Core.networkObjectManager.ClearAll();
-            }
+            // Vide les objets (garde les avatars) : ils seront réenregistrés par index.
+            Core.networkObjectManager?.ClearObjects();
         }
 
-        public static void Postfix(BlEditorManager __instance)
+        public static void Postfix(BlEditorManager __instance, List<BaseParameters> parameters)
         {
             if (WorldBuilderCoop.Behavior.WorldBuilderHistoryManager.Instance != null)
             {
-                WorldBuilderCoop.Behavior.WorldBuilderHistoryManager.Instance.RestoreState(__instance);
+                WorldBuilderCoop.Behavior.WorldBuilderHistoryManager.Instance.RestoreSnapshot(parameters);
             }
         }
     }
@@ -83,6 +85,7 @@ namespace WorldBuilderCoop.Patches
     {
         public static void Prefix(BlEditorManager __instance)
         {
+            // if (MapManager.IsSyncing) return;
             if (!WorldBuilderSync.IsRemoteAction && SteamNetworkManager.Instance != null)
             {
                 byte[] data = new byte[] { (byte)Packets.SaveHistory };
@@ -97,25 +100,25 @@ namespace WorldBuilderCoop.Patches
         private static float _lastSendTime;
         private const int TARGET_FPS = 20;
         private static float sendInterval => 1.0f / TARGET_FPS;
-        private static Vector3 _lastPosition = Vector3.zero;
-        private static Quaternion _lastRotation = Quaternion.identity;
-        private static Vector3 _lastScale = Vector3.one;
-        private const float POSITION_THRESHOLD = 0.01f;
-        private const float ROTATION_THRESHOLD = 0.5f;
-        private const float SCALE_THRESHOLD = 0.001f;
+        private static Vector3 _lastPosition;
+        private static Quaternion _lastRotation;
+        private static Vector3 _lastScale;
+        private const float MOVE_THRESHOLD = 0.01f;
+        private const float ROTATION_THRESHOLD = 0.1f;
+        private const float SCALE_THRESHOLD = 0.01f;
 
         public static void Postfix(BlEditorManager __instance)
         {
-            if (__instance == null || __instance.selectedTransforms == null || __instance.selectedTransforms.Count == 0)
-                return;
+            if (WorldBuilderSync.IsRemoteAction || SteamNetworkManager.Instance == null) return;
+            // if (MapManager.IsSyncing) return;
 
-            if (Time.time - _lastSendTime < sendInterval)
-                return;
+            if (Time.time - _lastSendTime < sendInterval) return;
 
-            List<int> objectIds = new List<int>();
-            Vector3 position = Vector3.zero;
-            Quaternion rotation = Quaternion.identity;
-            Vector3 scale = Vector3.one;
+            var transforms = new List<NetTransform>();
+            // Transform du pivot (1er objet sélectionné) pour le seuil de changement.
+            Vector3 pivotPos = Vector3.zero;
+            Quaternion pivotRot = Quaternion.identity;
+            Vector3 pivotScale = Vector3.one;
             bool hasValidObject = false;
 
             for (int i = 0; i < __instance.selectedTransforms.Count; i++)
@@ -125,32 +128,38 @@ namespace WorldBuilderCoop.Patches
 
                 if (networkObject != null)
                 {
-                    objectIds.Add(networkObject.NetworkId);
-                    hasValidObject = true;
-
-                    if (i == 0)
+                    transforms.Add(new NetTransform
                     {
-                        position = transform.position;
-                        rotation = transform.rotation;
-                        scale = transform.localScale;
+                        objectId = networkObject.NetworkId,
+                        position = transform.position,
+                        rotation = transform.rotation,
+                        scale = transform.localScale
+                    });
+
+                    if (!hasValidObject)
+                    {
+                        pivotPos = transform.position;
+                        pivotRot = transform.rotation;
+                        pivotScale = transform.localScale;
+                        hasValidObject = true;
                     }
                 }
             }
 
-            if (hasValidObject && objectIds.Count > 0)
+            if (hasValidObject)
             {
-                bool positionChanged = Vector3.Distance(position, _lastPosition) > POSITION_THRESHOLD;
-                bool rotationChanged = Quaternion.Angle(rotation, _lastRotation) > ROTATION_THRESHOLD;
-                bool scaleChanged = Vector3.Distance(scale, _lastScale) > SCALE_THRESHOLD;
+                bool positionChanged = Vector3.Distance(pivotPos, _lastPosition) > MOVE_THRESHOLD;
+                bool rotationChanged = Quaternion.Angle(pivotRot, _lastRotation) > ROTATION_THRESHOLD;
+                bool scaleChanged = Vector3.Distance(pivotScale, _lastScale) > SCALE_THRESHOLD;
 
                 if (positionChanged || rotationChanged || scaleChanged)
                 {
                     _lastSendTime = Time.time;
-                    _lastPosition = position;
-                    _lastRotation = rotation;
-                    _lastScale = scale;
+                    _lastPosition = pivotPos;
+                    _lastRotation = pivotRot;
+                    _lastScale = pivotScale;
 
-                    WorldBuilderEventManager.Instance.RaiseObjectMoved(objectIds, position, rotation, scale);
+                    WorldBuilderEventManager.Instance.RaiseObjectMoved(transforms);
                 }
             }
         }
@@ -163,7 +172,7 @@ namespace WorldBuilderCoop.Patches
         {
             if (__instance != null && __instance.selectedTransforms != null && __instance.selectedTransforms.Count > 0)
             {
-                List<int> objectIds = new List<int>();
+                List<long> objectIds = new List<long>();
 
                 foreach (var transform in __instance.selectedTransforms)
                 {
@@ -211,42 +220,39 @@ namespace WorldBuilderCoop.Patches
     {
         public static void Postfix(BlEditorManager __instance)
         {
-            // Only handle if we are connected and it's a local action (not triggered by remote packet)
-            if (!WorldBuilderSync.IsRemoteAction && SteamNetworkManager.Instance != null && __instance.selectedTransforms.Count > 0)
+            if (WorldBuilderSync.IsRemoteAction || SteamNetworkManager.Instance == null || __instance.selectedTransforms.Count == 0)
+                return;
+
+            // Après DuplicateSelection, selectedTransforms = les nouvelles copies.
+            // Chaque copie hérite du NetworkId de sa source (composant copié) :
+            // on l'utilise comme sourceId, puis on alloue un ID neuf sans collision.
+            var entries = new List<DuplicateEntry>();
+
+            foreach (var t in __instance.selectedTransforms)
             {
-                List<int> objectIds = new List<int>();
+                var netObj = t.GetComponent<NetworkObject>();
+                if (netObj == null) continue;
 
-                // The objects in selectedTransforms are the NEW copies (DuplicateSelection selects them)
-                foreach (var t in __instance.selectedTransforms)
+                long sourceId = netObj.NetworkId;
+                long newId = NetworkIdAllocator.Allocate();
+                netObj.NetworkId = newId;
+
+                // Enregistrer la copie locale pour qu'elle soit adressable immédiatement.
+                Core.networkObjectManager.RegisterNetworkObject(newId, netObj);
+
+                entries.Add(new DuplicateEntry
                 {
-                    var netObj = t.GetComponent<NetworkObject>();
+                    sourceId = sourceId,
+                    newId = newId,
+                    position = t.position,
+                    rotation = t.rotation,
+                    scale = t.localScale
+                });
+            }
 
-                    // If the object was copied from a NetworkObject, it will have the component but with the OLD NetworkId
-                    // We need to assign a NEW NetworkId
-                    if (netObj != null)
-                    {
-                        // Generate a new unique ID
-                        int newId = System.Guid.NewGuid().GetHashCode();
-                        netObj.NetworkId = newId;
-
-                        // Now we need to broadcast this new object creation to others
-                        // We use PlaceObject packet because for others, it's effectively a new object
-
-                        // We need to gather prefab info
-                        string prefabPath = netObj.PrefabPath;
-                        int prefabIndex = netObj.PrefabIndex;
-
-                        // Serialize PlaceObject
-                        // Note: We need to access WorldBuilderEventManager to serialize, or call WorldBuilderSync logic?
-                        // Actually, we should use WorldBuilderEventManager to raise the event or send packet directly.
-                        // WorldBuilderEventManager has SerializePlaceObject but it's private.
-                        // We can expose a method in WorldBuilderEventManager or replicate serialization here.
-                        // Better: Use WorldBuilderEventManager.RaiseObjectPlaced if available or similar.
-
-                        // Check WorldBuilderEventManager
-                        WorldBuilderEventManager.Instance.RaiseObjectPlaced(newId, prefabPath, t.position, t.rotation, t.localScale, prefabIndex);
-                    }
-                }
+            if (entries.Count > 0 && SelectionBatcher.Instance != null)
+            {
+                SelectionBatcher.Instance.RequestDuplicate(entries);
             }
         }
     }

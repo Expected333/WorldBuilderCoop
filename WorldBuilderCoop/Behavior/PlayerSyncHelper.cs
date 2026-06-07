@@ -32,26 +32,17 @@ namespace WorldBuilderCoop
 
         public static void userSync(int userId, Vector3 position, Quaternion rotation, int placeIndex)
         {
-            UserAvatar[] userAvatars = UnityEngine.Object.FindObjectsByType<UserAvatar>(FindObjectsSortMode.None);
-            UserAvatar foundAvatar = null;
-
-            foreach (var avatar in userAvatars)
-            {
-                if (avatar.UserId == userId)
-                {
-                    foundAvatar = avatar;
-                    break;
-                }
-            }
+            // Lookup O(1) via le registre au lieu d'un FindObjectsByType par paquet (~20/s/joueur).
+            UserAvatar foundAvatar = Core.networkObjectManager.GetUserAvatar(userId);
 
             if (foundAvatar == null)
             {
-                ConsoleBase.WriteLine($"[PlayerSyncHelper] New user detected (ID: {userId}), creating avatar.");
+                WbLog.Debug($"[PlayerSyncHelper] New user detected (ID: {userId}), creating avatar.");
                 addUser(userId, position, rotation, placeIndex);
             }
             else
             {
-                ConsoleBase.WriteLine($"[PlayerSyncHelper] Updating existing user (ID: {userId}) to {position}");
+                WbLog.Debug($"[PlayerSyncHelper] Updating existing user (ID: {userId}) to {position}");
                 var interpolator = foundAvatar.GetComponent<UserInterpolator>();
                 if (interpolator == null)
                 {
@@ -65,6 +56,21 @@ namespace WorldBuilderCoop
             }
         }
 
+        public static void RemoveUser(int userId)
+        {
+            // Libère les verrous de sélection du joueur parti (sinon ses objets restent
+            // bloqués pour les autres). Chaque client fait ce nettoyage localement.
+            Core.networkObjectManager.ReleaseAllByUser(userId);
+
+            UserAvatar avatar = Core.networkObjectManager.GetUserAvatar(userId);
+            if (avatar != null)
+            {
+                WbLog.Debug($"[PlayerSyncHelper] Removing user {userId}");
+                Core.networkObjectManager.UnregisterUserAvatar(userId);
+                UnityEngine.Object.Destroy(avatar.gameObject);
+            }
+        }
+
         public static void addUser(int userId, Vector3 position, Quaternion rotation, int placeIndex)
         {
             int currentUserId = GetCurrentUserId();
@@ -73,17 +79,13 @@ namespace WorldBuilderCoop
                 return;
             }
 
-            UserAvatar[] currentAvatars = UnityEngine.Object.FindObjectsByType<UserAvatar>(FindObjectsSortMode.None);
-            foreach (var existing in currentAvatars)
+            if (Core.networkObjectManager.GetUserAvatar(userId) != null)
             {
-                if (existing.UserId == userId)
-                {
-                    ConsoleBase.WriteLine($"[PlayerSyncHelper] [Sync Conflict Avoided] Avatar already exists for user {userId}. Skipping creation.");
-                    return;
-                }
+                WbLog.Debug($"[PlayerSyncHelper] [Sync Conflict Avoided] Avatar already exists for user {userId}. Skipping creation.");
+                return;
             }
 
-            ConsoleBase.WriteLine($"[PlayerSyncHelper] [New Player Sync] Initializing avatar for user {userId} at {position}");
+            WbLog.Debug($"[PlayerSyncHelper] [New Player Sync] Initializing avatar for user {userId} at {position}");
 
             try
             {
@@ -109,6 +111,8 @@ namespace WorldBuilderCoop
                 avatar.position = position;
                 avatar.rotation = rotation;
                 avatar.placeIndex = placeIndex;
+
+                Core.networkObjectManager.RegisterUserAvatar(userId, avatar);
 
                 // Add interpolator
                 var interpolator = userSphere.AddComponent<UserInterpolator>();
@@ -136,7 +140,7 @@ namespace WorldBuilderCoop
 
                 UpdateAvatarVisibility(avatar);
 
-                ConsoleBase.WriteLine($"[PlayerSyncHelper] [Success] Avatar created for user {userId}");
+                WbLog.Debug($"[PlayerSyncHelper] [Success] Avatar created for user {userId}");
             }
             catch (System.Exception ex)
             {
@@ -146,8 +150,7 @@ namespace WorldBuilderCoop
 
         public static void UpdateAllAvatarsVisibility()
         {
-            UserAvatar[] userAvatars = UnityEngine.Object.FindObjectsByType<UserAvatar>(FindObjectsSortMode.None);
-            foreach (var avatar in userAvatars)
+            foreach (var avatar in Core.networkObjectManager.GetAllUserAvatars())
             {
                 UpdateAvatarVisibility(avatar);
             }
@@ -175,34 +178,8 @@ namespace WorldBuilderCoop
             }
         }
 
-        private static int GetCurrentUserId()
-        {
-            var steamNetManager = SteamNetworkManager.Instance;
-            if (steamNetManager != null && steamNetManager.IsLocalMode())
-            {
-                return LocalUserManager.GetLocalUserId();
-            }
-            return SteamUser.GetSteamID().m_SteamID.GetHashCode();
-        }
+        private static int GetCurrentUserId() => NetworkIdentity.GetUserId();
 
-        public static void removeUser(int userId)
-        {
-            UserAvatar[] userAvatars = UnityEngine.Object.FindObjectsByType<UserAvatar>(FindObjectsSortMode.None);
-            UserAvatar toRemove = null;
-
-            foreach (var avatar in userAvatars)
-            {
-                if (avatar.UserId == userId)
-                {
-                    toRemove = avatar;
-                    break;
-                }
-            }
-
-            if (toRemove != null)
-            {
-                UnityEngine.Object.Destroy(toRemove.gameObject);
-            }
-        }
+        public static void removeUser(int userId) => RemoveUser(userId);
     }
 }

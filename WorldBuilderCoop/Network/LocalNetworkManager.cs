@@ -13,7 +13,7 @@ namespace WorldBuilderCoop.Network
         private NetworkStream _networkStream;
         private List<TcpClient> _connectedClients = new List<TcpClient>();
         private readonly object _clientsLock = new object();
-        private const int LocalPort = 7777;
+        private const int LocalPort = NetworkConfig.DefaultPort;
 
         public bool IsConnected { get; private set; }
         public bool IsHost { get; private set; }
@@ -27,7 +27,7 @@ namespace WorldBuilderCoop.Network
                 IsHost = true;
                 IsConnected = true;
 
-                ConsoleBase.WriteLine($"[LocalNetwork] Host listening on localhost:{LocalPort}");
+                WbLog.Debug($"[LocalNetwork] Host listening on localhost:{LocalPort}");
                 _tcpListener.BeginAcceptTcpClient(result => OnClientConnected(result, onClientConnected), null);
                 return true;
             }
@@ -44,7 +44,7 @@ namespace WorldBuilderCoop.Network
             {
                 _tcpClient = new TcpClient();
                 _tcpClient.BeginConnect("127.0.0.1", LocalPort, result => OnConnectedToHost(result, onSuccess, onError), null);
-                ConsoleBase.WriteLine($"[LocalNetwork] Attempting to connect to localhost:{LocalPort}");
+                WbLog.Debug($"[LocalNetwork] Attempting to connect to localhost:{LocalPort}");
             }
             catch (Exception ex)
             {
@@ -57,7 +57,7 @@ namespace WorldBuilderCoop.Network
             try
             {
                 TcpClient client = _tcpListener.EndAcceptTcpClient(result);
-                ConsoleBase.WriteLine($"[LocalNetwork] Client connected from {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
+                WbLog.Debug($"[LocalNetwork] Client connected from {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
                 onClientConnected?.Invoke(client);
                 _tcpListener.BeginAcceptTcpClient(r => OnClientConnected(r, onClientConnected), null);
             }
@@ -74,7 +74,7 @@ namespace WorldBuilderCoop.Network
                 _tcpClient.EndConnect(result);
                 _networkStream = _tcpClient.GetStream();
                 IsConnected = true;
-                ConsoleBase.WriteLine("[LocalNetwork] Connected to host");
+                WbLog.Debug("[LocalNetwork] Connected to host");
                 onSuccess?.Invoke();
             }
             catch (Exception ex)
@@ -84,42 +84,37 @@ namespace WorldBuilderCoop.Network
             }
         }
 
-        public void ListenToClient(TcpClient client, Action<byte[]> onPacketReceived)
+        public void ListenToClient(TcpClient client, Action<byte[]> onPacketReceived, Action onDisconnect = null)
         {
             lock (_clientsLock)
             {
                 _connectedClients.Add(client);
             }
             var stream = client.GetStream();
-            ConsoleBase.WriteLine("[LocalNetwork] Started listening to client");
+            WbLog.Debug("[LocalNetwork] Started listening to client");
 
             try
             {
+                // Lecture bloquante : ce code tourne sur un thread dédié (Task.Run),
+                // donc on attend les données sans busy-loop ni Thread.Sleep.
+                byte[] sizeBytes = new byte[4];
                 while (client.Connected && IsHost)
                 {
-                    if (client.Available >= 4)
+                    // En-tête de taille (4 octets) : lecture complète, sinon connexion fermée.
+                    if (ReadFullBuffer(stream, sizeBytes, 4) < 4) break;
+
+                    int packetSize = BitConverter.ToInt32(sizeBytes, 0);
+                    if (packetSize <= 0 || packetSize > NetworkConfig.MaxPacketSize)
                     {
-                        ConsoleBase.WriteLine("[LocalNetwork] Data available on client socket");
-                        byte[] sizeBytes = new byte[4];
-                        if (stream.Read(sizeBytes, 0, 4) < 4) break;
-
-                        int packetSize = BitConverter.ToInt32(sizeBytes, 0);
-                        ConsoleBase.WriteLine($"[LocalNetwork] Received packet size: {packetSize}");
-
-                        if (packetSize <= 0 || packetSize > 1048576) continue;
-
-                        byte[] buffer = new byte[packetSize];
-                        int totalRead = ReadFullBuffer(stream, buffer, packetSize);
-
-                        if (totalRead == packetSize)
-                        {
-                            ConsoleBase.WriteLine($"[LocalNetwork] Packet received and applied - Type: {buffer[0]}");
-                            onPacketReceived?.Invoke(buffer);
-                            BroadcastToOthers(buffer, client);
-                        }
+                        ConsoleBase.WriteError($"[LocalNetwork] Invalid packet size {packetSize}, closing connection");
+                        break;
                     }
 
-                    System.Threading.Thread.Sleep(10);
+                    byte[] buffer = new byte[packetSize];
+                    if (ReadFullBuffer(stream, buffer, packetSize) != packetSize) break;
+
+                    onPacketReceived?.Invoke(buffer);
+                    BroadcastToOthers(buffer, client);
                 }
             }
             catch (Exception ex)
@@ -127,7 +122,7 @@ namespace WorldBuilderCoop.Network
                 ConsoleBase.WriteError($"[LocalNetwork] Client listen error: {ex.Message}");
             }
 
-            ConsoleBase.WriteLine("[LocalNetwork] Stopped listening to client");
+            WbLog.Debug("[LocalNetwork] Stopped listening to client");
             lock (_clientsLock)
             {
                 _connectedClients.Remove(client);
@@ -148,7 +143,7 @@ namespace WorldBuilderCoop.Network
             return totalRead;
         }
 
-        private void BroadcastToOthers(byte[] data, TcpClient sender)
+        public void BroadcastToOthers(byte[] data, TcpClient sender)
         {
             TcpClient[] clientsSnapshot;
             lock (_clientsLock)
@@ -173,7 +168,7 @@ namespace WorldBuilderCoop.Network
 
         public void SendToAll(byte[] data, bool isHost)
         {
-            ConsoleBase.WriteLine($"[LocalNetwork] SendToAll called - IsHost: {isHost}, DataSize: {data.Length}");
+            WbLog.Debug($"[LocalNetwork] SendToAll called - IsHost: {isHost}, DataSize: {data.Length}");
 
             if (isHost)
             {
@@ -182,7 +177,7 @@ namespace WorldBuilderCoop.Network
                 {
                     clientsSnapshot = _connectedClients.ToArray();
                 }
-                ConsoleBase.WriteLine($"[LocalNetwork] Broadcasting to {clientsSnapshot.Length} clients");
+                WbLog.Debug($"[LocalNetwork] Broadcasting to {clientsSnapshot.Length} clients");
                 foreach (var client in clientsSnapshot)
                 {
                     try
@@ -197,14 +192,14 @@ namespace WorldBuilderCoop.Network
             }
             else
             {
-                ConsoleBase.WriteLine("[LocalNetwork] Sending to host");
+                WbLog.Debug("[LocalNetwork] Sending to host");
                 SendPacket(data);
             }
         }
 
         public void SendToHost(byte[] data)
         {
-            ConsoleBase.WriteLine($"[LocalNetwork] SendToHost called - DataSize: {data.Length}");
+            WbLog.Debug($"[LocalNetwork] SendToHost called - DataSize: {data.Length}");
             SendPacket(data);
         }
 
@@ -226,7 +221,7 @@ namespace WorldBuilderCoop.Network
                     targetStream.Write(data, 0, data.Length);
                     targetStream.Flush();
                 }
-                ConsoleBase.WriteLine($"[LocalNetwork] Packet sent successfully - Size: {data.Length}");
+                // WbLog.Debug($"[LocalNetwork] Packet sent successfully - Size: {data.Length}");
             }
             catch (Exception ex)
             {
@@ -248,9 +243,9 @@ namespace WorldBuilderCoop.Network
                         return null;
 
                     int packetSize = BitConverter.ToInt32(sizeBytes, 0);
-                    ConsoleBase.WriteLine($"[LocalNetwork] Client received packet size: {packetSize}");
+                    // WbLog.Debug($"[LocalNetwork] Client received packet size: {packetSize}");
 
-                    if (packetSize <= 0 || packetSize > 1048576)
+                    if (packetSize <= 0 || packetSize > NetworkConfig.MaxPacketSize)
                         return null;
 
                     byte[] buffer = new byte[packetSize];
@@ -258,7 +253,7 @@ namespace WorldBuilderCoop.Network
 
                     if (totalRead == packetSize)
                     {
-                        ConsoleBase.WriteLine($"[LocalNetwork] Client received packet - Type: {buffer[0]}");
+                        // WbLog.Debug($"[LocalNetwork] Client received packet - Type: {buffer[0]}");
                         return buffer;
                     }
                 }

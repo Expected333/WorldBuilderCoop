@@ -28,7 +28,12 @@ namespace WorldBuilderCoop.Network
         Undo = 10,
         Redo = 11,
         Duplicate = 12,
-        SaveHistory = 13
+        SaveHistory = 13,
+        BatchAddToSelection = 14,
+        DuplicateSelection = 15,
+        StartMapSync = 16,
+        EndMapSync = 17,
+        UpdateComponent = 18
     }
 
     public enum PacketDistribution
@@ -48,15 +53,36 @@ namespace WorldBuilderCoop.Network
 
     public class NetworkObject : MonoBehaviour
     {
-        public int NetworkId;
+        // ID réseau global 64 bits = (userId << 32) | compteur. Voir NetworkIdAllocator.
+        public long NetworkId;
         public string PrefabPath;
         public int PrefabIndex = -1;
     }
 
     public class ObjectInfo
     {
-        public int objectId;
+        public long objectId;
         public int placeIndex;
+        public int prefabIndex;
         public byte[] componentData;
+    }
+
+    /// <summary>Transform d'un objet identifié, pour la réplication par-objet.</summary>
+    public struct NetTransform
+    {
+        public long objectId;
+        public Vector3 position;
+        public Quaternion rotation;
+        public Vector3 scale;
+    }
+
+    /// <summary>Mapping explicite source -> nouvel ID pour répliquer une duplication.</summary>
+    public struct DuplicateEntry
+    {
+        public long sourceId;
+        public long newId;
+        public Vector3 position;
+        public Quaternion rotation;
+        public Vector3 scale;
     }
 }

@@ -6,6 +6,7 @@ using System.IO;
 using UnityEngine;
 using WorldBuilderCoop.Events;
 using WorldBuilderCoop.Network;
+using WorldBuilderCoop.Managers;
 
 namespace WorldBuilderCoop.Patches
 {
@@ -14,6 +15,8 @@ namespace WorldBuilderCoop.Patches
     {
         public static bool Prefix(BrokeProtocol.Client.UI.BlPrefabItemButton __instance)
         {
+            // if (MapManager.IsSyncing) return false;
+
             GameObject asset = Traverse.Create(__instance).Field("asset").GetValue() as GameObject;
 
             if (__instance.CompareTag("Folder"))
@@ -44,11 +47,15 @@ namespace WorldBuilderCoop.Patches
             if (gameObject != null && gameObject.transform != null)
             {
                 NetworkObject networkObject = gameObject.AddComponent<NetworkObject>();
-                networkObject.NetworkId = UnityEngine.Random.Range(int.MinValue, int.MaxValue);
+                networkObject.NetworkId = NetworkIdAllocator.Allocate();
 
                 string prefabName = __instance.name;
                 string currentPath = MonoBehaviourSingleton<BlEditorManager>.Instance.currentPrefabPath;
                 string fullPath = Path.Combine(currentPath, prefabName);
+                networkObject.PrefabPath = fullPath;
+
+                // Enregistrer localement pour que les éditions ultérieures (move/delete) soient adressables.
+                Core.networkObjectManager.RegisterNetworkObject(networkObject.NetworkId, networkObject);
 
                 MonoBehaviourSingleton<BlEditorManager>.Instance.SetSelection(gameObject.transform);
 

@@ -1,4 +1,4 @@
-﻿using ModLoader;
+using ModLoader;
 
 namespace WorldBuilderCoop.Network
 {
@@ -11,7 +11,7 @@ namespace WorldBuilderCoop.Network
             if (_localUserId == -1)
             {
                 _localUserId = UnityEngine.Random.Range(1000000, 2000000);
-                ConsoleBase.WriteLine($"[LocalUserManager] Assigned local user ID: {_localUserId}");
+                WbLog.Debug($"[LocalUserManager] Assigned local user ID: {_localUserId}");
             }
             return _localUserId;
         }

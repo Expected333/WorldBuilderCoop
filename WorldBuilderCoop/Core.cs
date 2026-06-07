@@ -29,6 +29,10 @@ namespace WorldBuilderCoop
             EventManager = WorldBuilderEventManager.Instance;
             NetworkSync = new NetworkSyncHandler();
 
+            GameObject managerGo = new GameObject("WorldBuilderManagers");
+            GameObject.DontDestroyOnLoad(managerGo);
+            managerGo.AddComponent<Managers.SelectionBatcher>();
+
             PatchAll();
         }
     }

@@ -1,4 +1,4 @@
-﻿using BrokeProtocol.Managers;
+using BrokeProtocol.Managers;
 using BrokeProtocol.Utility;
 using ModLoader;
 using UnityEngine;
@@ -14,7 +14,7 @@ namespace WorldBuilderCoop
             var sceneManager = MonoBehaviourSingleton<SceneManager>.Instance;
             if (sceneManager == null)
             {
-                ConsoleBase.WriteLine("[WBCoop] SceneManager not found");
+                WbLog.Debug("[WBCoop] SceneManager not found");
                 return;
             }
 
@@ -31,7 +31,7 @@ namespace WorldBuilderCoop
                     if (testElement != null)
                     {
                         root = doc.rootVisualElement;
-                        ConsoleBase.WriteLine($"[WBCoop] Found Builder UI with {root.childCount} children");
+                        WbLog.Debug($"[WBCoop] Found Builder UI with {root.childCount} children");
                         break;
                     }
                 }
@@ -39,14 +39,14 @@ namespace WorldBuilderCoop
 
             if (root == null)
             {
-                ConsoleBase.WriteLine("[WBCoop] Could not find Builder UI root");
+                WbLog.Debug("[WBCoop] Could not find Builder UI root");
                 return;
             }
 
             // Show mode selection first
             MainUI.createModeSelectionUI(sceneManager);
 
-            ConsoleBase.WriteLine("[WBCoop] Builder theme applied successfully");
+            WbLog.Debug("[WBCoop] Builder theme applied successfully");
         }
     }
 }

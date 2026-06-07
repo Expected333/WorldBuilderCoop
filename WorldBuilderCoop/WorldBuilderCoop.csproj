@@ -43,13 +43,17 @@
     <Compile Include="DTOs\SerializedComponent.cs" />
     <Compile Include="Events\WorldBuilderEventManager.cs" />
     <Compile Include="Managers\MapManager.cs" />
+    <Compile Include="Managers\MapLoadingScreen.cs" />
+    <Compile Include="Managers\SelectionBatcher.cs" />
     <Compile Include="Network\LocalNetworkManager.cs" />
     <Compile Include="Network\LocalUserManger.cs" />
     <Compile Include="Network\Models\NetworkConfig.cs" />
+    <Compile Include="Network\NetworkIdentity.cs" />
     <Compile Include="Network\NetworkObjectManager.cs" />
     <Compile Include="Network\PacketHandler.cs" />
     <Compile Include="Network\SteamNetworkManager.cs" />
     <Compile Include="Patches\BlEditorManagerPatches.cs" />
+    <Compile Include="Patches\InspectorPatches.cs" />
     <Compile Include="Patches\MapSyncPatches.cs" />
     <Compile Include="Patches\SelectionPatches.cs" />
     <Compile Include="Patches\UIInteractionsPatches.cs" />
@@ -60,6 +64,7 @@
     <Compile Include="UI\Styles.cs" />
     <Compile Include="UI\UIHosting.cs" />
     <Compile Include="Utility\CompressionUtil.cs" />
+    <Compile Include="Utility\WbLog.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="!_0Harmony">

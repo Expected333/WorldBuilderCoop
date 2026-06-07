@@ -13,34 +13,105 @@ using System.Text;
 using UnityEngine;
 using WorldBuilderCoop.Network;
 
+using Steamworks;
+using System.Net.Sockets;
+
 namespace WorldBuilderCoop.Managers
 {
     public static class MapManager
     {
         private static byte[] _incomingBuffer;
         private static int _receivedBytesCount;
+        // Suivi des chunks reçus (par index) : dédoublonnage + détection de complétude
+        // déterministe (indépendante du compte d'octets, robuste aux doublons/réordonnancements).
+        private static readonly HashSet<int> _receivedChunks = new HashSet<int>();
+        private static int _expectedChunks = -1;
+        private static bool _mapComplete;
         private static readonly List<ObjectInfo> _pendingLoadObjects = new List<ObjectInfo>();
         private static readonly bool _isProcessingLoad = false;
-        public static bool IsLoading { get; private set; } = false;
 
-        public static void HandleIncomingChunk(int totalSize, int offset, byte[] data)
+        // Taille de chunk : gros chunks => bien moins de paquets => transfert plus fiable/rapide.
+        // Reste sous NetworkConfig.MaxPacketSize (1 Mo) et sous la limite Steam P2P fiable (1 Mo).
+        private const int MapChunkSize = 512 * 1024;
+        private static bool _isLoading = false;
+        public static bool IsLoading
         {
-            if (_incomingBuffer == null || _incomingBuffer.Length != totalSize)
+            get => _isLoading;
+            set
             {
-                IsLoading = true;
+                if (_isLoading != value)
+                {
+                    _isLoading = value;
+                    /*
+                    if (_isLoading)
+                    {
+                        // Enable loading screen for everyone when sync starts
+                        // SceneManager.Instance.ResetLoadingWindow(1); // Placeholder
+                        BlEditorManager.Instance.ClearSelection();
+                        MonoBehaviourSingleton<BrokeProtocol.Managers.SceneManager>.Instance.Clear();
+                    }
+                    else
+                    {
+                        // Hide loading screen
+                        SceneManager.Instance.ResetLoadingWindow(0);
+                    }
+                    */
+                }
+            }
+        }
+        
+        public static bool IsSyncing { get; private set; }
+
+        public static void SetSyncState(bool syncing, bool clearMap = true, int totalSize = 0)
+        {
+            IsSyncing = syncing;
+            // IsLoading = syncing && clearMap;
+        }
+
+        public static void FinishLoading()
+        {
+            SetSyncState(false);
+        }
+
+        public static void HandleIncomingChunk(int totalSize, int totalChunks, int chunkIndex, int offset, byte[] data)
+        {
+            // Nouveau transfert détecté (taille ou nombre de chunks différent, ou pas de buffer).
+            if (_incomingBuffer == null || _incomingBuffer.Length != totalSize || _expectedChunks != totalChunks)
+            {
                 _incomingBuffer = new byte[totalSize];
                 _receivedBytesCount = 0;
-                SceneManager.Instance.ResetLoadingWindow(totalSize); // Initialize progress bar based on bytes
+                _receivedChunks.Clear();
+                _expectedChunks = totalChunks;
+                _mapComplete = false;
+
+                BlEditorManager.Instance.AppendHistory();
+                BlEditorManager.Instance.ClearSelection();
+                MonoBehaviourSingleton<BrokeProtocol.Managers.SceneManager>.Instance.Clear();
+                // La scène est vidée : on repart d'un registre d'objets propre pour
+                // réenregistrer avec les IDs autoritaires du host (les avatars sont conservés).
+                WorldBuilderCoop.Core.networkObjectManager.ClearObjects();
+
+                MapLoadingScreen.BeginDownload(totalSize);
+                WbLog.Debug($"[Client] Started receiving map. Total: {totalSize} bytes, {totalChunks} chunks");
             }
 
-            Array.Copy(data, 0, _incomingBuffer, offset, data.Length);
-            _receivedBytesCount += data.Length;
-
-            // Update loading progress as bytes are received
-            SceneManager.Instance.IncrementTransferProgress(data.Length);
-
-            if (_receivedBytesCount >= totalSize)
+            // Place le chunk à son offset. Compte les octets une seule fois par index (dédoublonnage).
+            if (offset >= 0 && offset + data.Length <= _incomingBuffer.Length)
             {
+                Array.Copy(data, 0, _incomingBuffer, offset, data.Length);
+            }
+            if (_receivedChunks.Add(chunkIndex))
+            {
+                _receivedBytesCount += data.Length;
+            }
+
+            MapLoadingScreen.DownloadProgress(_receivedBytesCount);
+
+            // Complétude déterministe : tous les chunks reçus (pas un simple cumul d'octets).
+            if (!_mapComplete && _expectedChunks > 0 && _receivedChunks.Count >= _expectedChunks)
+            {
+                _mapComplete = true;
+                WbLog.Debug($"[Client] Map download complete ({_receivedChunks.Count}/{_expectedChunks} chunks). Processing...");
                 ProcessDownloadedMap();
             }
         }
@@ -52,6 +123,8 @@ namespace WorldBuilderCoop.Managers
                 byte[] decompressedData = DecompressData(_incomingBuffer);
                 _incomingBuffer = null;
                 _receivedBytesCount = 0;
+                _receivedChunks.Clear();
+                _expectedChunks = -1;
 
                 List<ObjectInfo> objects = new List<ObjectInfo>();
 
@@ -63,8 +136,9 @@ namespace WorldBuilderCoop.Managers
                     {
                         var obj = new ObjectInfo
                         {
-                            objectId = reader.ReadInt32(),
-                            placeIndex = reader.ReadInt32()
+                            objectId = reader.ReadInt64(),
+                            placeIndex = reader.ReadInt32(),
+                            prefabIndex = reader.ReadInt32()
                         };
                         int len = reader.ReadInt32();
                         obj.componentData = reader.ReadBytes(len);
@@ -80,7 +154,13 @@ namespace WorldBuilderCoop.Managers
             {
                 ConsoleBase.WriteError($"[Client] Error processing map: {ex.Message}");
                 _incomingBuffer = null;
-                IsLoading = false;
+                _receivedChunks.Clear();
+                _expectedChunks = -1;
+                MapLoadingScreen.End();
+                SetSyncState(false);
+                // IMPORTANT : sortir de l'état "loading" et vider la file, sinon _isLoadingMap
+                // resterait true et l'invité mettrait tous les paquets en attente indéfiniment.
+                SteamNetworkManager.Instance?.OnMapLoadCompleted();
             }
         }
 
@@ -93,7 +173,23 @@ namespace WorldBuilderCoop.Managers
 
             int processed = 0;
             var stopwatch = new System.Diagnostics.Stopwatch();
-            SceneManager.Instance.ResetLoadingWindow(totalCount);
+            // SceneManager.Instance.ResetLoadingWindow(totalCount);
+
+            int maxPlaceIndex = -1;
+            for (int i = 0; i < _pendingLoadObjects.Count; i++)
+            {
+                if (_pendingLoadObjects[i].placeIndex > maxPlaceIndex)
+                {
+                    maxPlaceIndex = _pendingLoadObjects[i].placeIndex;
+                }
+            }
+            if (maxPlaceIndex >= 0)
+            {
+                SceneManager.Instance.SetMinPlaces(maxPlaceIndex);
+            }
+
+            WbLog.Debug($"[Client] Processing {totalCount} objects...");
+            MapLoadingScreen.BeginProcessing(totalCount);
 
             while (_pendingLoadObjects.Count > 0)
             {
@@ -106,35 +202,27 @@ namespace WorldBuilderCoop.Managers
 
                     try
                     {
-                        string json = Encoding.UTF8.GetString(obj.componentData);
-                        var baseParams = JsonUtility.FromJson<BaseParameters>(json);
-
-                        if (baseParams != null)
+                        if (SceneManager.Instance.TryGetPrefab(obj.prefabIndex, out GameObject prefab))
                         {
-                            if (SceneManager.Instance.TryGetPrefab(baseParams.index, out GameObject prefab))
+                            Type type = typeof(BaseParameters);
+                            if (prefab.TryGetComponent<Serialized>(out var component))
                             {
-                                GameObject instance;
-                                BaseParameters finalParams = baseParams;
+                                type = component.Parameters.GetType();
+                            }
 
-                                if (prefab.TryGetComponent<Serialized>(out var component))
-                                {
-                                    Type specificType = component.Parameters.GetType();
-                                    finalParams = (BaseParameters)JsonUtility.FromJson(json, specificType);
-                                }
+                            string json = Encoding.UTF8.GetString(obj.componentData);
+                            var finalParams = (BaseParameters)JsonUtility.FromJson(json, type);
 
-                                // Ensure the Place container exists before instantiation
-                                if (finalParams.placeIndex >= 0)
-                                {
-                                    SceneManager.Instance.SetMinPlaces(finalParams.placeIndex);
-                                }
-
-                                instance = SceneManager.Instance.InstantiateEditor(prefab, finalParams.placeIndex, finalParams.position, finalParams.rotation);
+                            if (finalParams != null)
+                            {
+                                var instance = SceneManager.Instance.InstantiateEditor(prefab, finalParams.placeIndex, finalParams.position, finalParams.rotation);
                                 finalParams.UpdateObject(instance.transform);
 
                                 var netObj = instance.AddComponent<NetworkObject>();
-                                netObj.NetworkId = obj.objectId;
-                                WorldBuilderCoop.Core.networkObjectManager.AddNetworkObject(netObj);
-                                SceneManager.Instance.IncrementTransferProgress(1);
+                                netObj.PrefabIndex = obj.prefabIndex;
+                                // Conserver l'ID autoritaire du host (ne PAS réassigner via AddNetworkObject).
+                                WorldBuilderCoop.Core.networkObjectManager.RegisterNetworkObject(obj.objectId, netObj);
+                                // SceneManager.Instance.IncrementTransferProgress(1);
                             }
                             else
                             {
@@ -153,25 +241,28 @@ namespace WorldBuilderCoop.Managers
                     }
                     processed++;
                 }
+                MapLoadingScreen.ProcessingProgress(processed);
                 yield return null;
             }
 
-            // Post-process map to resolve linked references (Doors, Waypoints, etc.)
+            // Post-process map for entities
             SceneManager.Instance.ProcessMap();
             yield return new WaitForSeconds(0.05f);
             SceneManager.Instance.SetPlace(1);
             yield return new WaitForSeconds(0.05f);
             SceneManager.Instance.SetPlace(0);
-            
+
             if (SteamNetworkManager.Instance != null)
             {
                 SteamNetworkManager.Instance.OnMapLoadCompleted();
             }
 
-            IsLoading = false;
+            SetSyncState(false);
             PacketHandler.ProcessBufferedPackets();
 
+            MapLoadingScreen.End();
             SendLoadFinished(processed);
+            WbLog.Debug("[Client] Map processing finished.");
         }
 
         private static void CreatePlaceholder(int placeIndex)
@@ -203,6 +294,13 @@ namespace WorldBuilderCoop.Managers
 
         public static IEnumerator SendMapToClients(List<ObjectInfo> objects)
         {
+            byte[] compressed = SerializeAndCompress(objects);
+            yield return SendChunks(compressed, data => SteamNetworkManager.Instance.SendToAll(data));
+        }
+
+        /// <summary>Sérialise la liste d'objets puis la compresse en gzip.</summary>
+        private static byte[] SerializeAndCompress(List<ObjectInfo> objects)
+        {
             byte[] rawBytes;
             using (var ms = new MemoryStream())
             using (var writer = new BinaryWriter(ms))
@@ -212,76 +310,58 @@ namespace WorldBuilderCoop.Managers
                 {
                     writer.Write(obj.objectId);
                     writer.Write(obj.placeIndex);
+                    writer.Write(obj.prefabIndex);
                     writer.Write(obj.componentData.Length);
                     writer.Write(obj.componentData);
                 }
                 rawBytes = ms.ToArray();
             }
 
-            byte[] compressedBytes;
             using (var ms = new MemoryStream())
             {
                 using (var gzip = new GZipStream(ms, CompressionMode.Compress))
                 {
                     gzip.Write(rawBytes, 0, rawBytes.Length);
                 }
-                compressedBytes = ms.ToArray();
+                return ms.ToArray();
             }
+        }
 
-            int chunkSize = 4096;
-            int totalSize = compressedBytes.Length;
+        /// <summary>
+        /// Envoie les données compressées en chunks. Format du paquet LoadMap :
+        /// [type][totalSize][totalChunks][chunkIndex][offset][chunkSize][data].
+        /// Gros chunks (512 Ko) = peu de paquets = transfert fiable et rapide ; un chunk par frame.
+        /// </summary>
+        private static IEnumerator SendChunks(byte[] compressed, Action<byte[]> send)
+        {
+            int totalSize = compressed.Length;
+            int totalChunks = Mathf.Max(1, (totalSize + MapChunkSize - 1) / MapChunkSize);
             int offset = 0;
-            int maxBytesPerSecond = 200000;
 
-            var stopwatch = new System.Diagnostics.Stopwatch();
-            float startTime = Time.realtimeSinceStartup;
-            int totalBytesSent = 0;
-
-            while (offset < totalSize)
+            for (int index = 0; index < totalChunks; index++)
             {
-                stopwatch.Restart();
-                float elapsedTime = Time.realtimeSinceStartup - startTime;
-
-                if (elapsedTime > 0.1f)
-                {
-                    float currentRate = totalBytesSent / elapsedTime;
-                    if (currentRate > maxBytesPerSecond)
-                    {
-                        yield return null;
-                        continue;
-                    }
-                }
-
-                int remaining = totalSize - offset;
-                int currentChunkSize = Mathf.Min(remaining, chunkSize);
+                int currentChunkSize = Mathf.Min(MapChunkSize, totalSize - offset);
+                if (currentChunkSize < 0) currentChunkSize = 0;
 
                 using (var ms = new MemoryStream())
                 using (var writer = new BinaryWriter(ms))
                 {
                     writer.Write((byte)Packets.LoadMap);
                     writer.Write(totalSize);
+                    writer.Write(totalChunks);
+                    writer.Write(index);
                     writer.Write(offset);
                     writer.Write(currentChunkSize);
-                    writer.Write(compressedBytes, offset, currentChunkSize);
-                    SteamNetworkManager.Instance.SendToAll(ms.ToArray());
+                    if (currentChunkSize > 0) writer.Write(compressed, offset, currentChunkSize);
+                    send(ms.ToArray());
                 }
 
                 offset += currentChunkSize;
-                totalBytesSent += currentChunkSize;
-
-                if (stopwatch.ElapsedMilliseconds > 10)
-                {
-                    yield return null;
-                }
+                yield return null; // un chunk par frame pour ne pas figer le jeu
             }
         }
 
-        private static int GetCurrentUserId()
-        {
-            return SteamNetworkManager.Instance != null && SteamNetworkManager.Instance.IsLocalMode()
-                ? LocalUserManager.GetLocalUserId()
-                : Steamworks.SteamUser.GetSteamID().m_SteamID.GetHashCode();
-        }
+        private static int GetCurrentUserId() => NetworkIdentity.GetUserId();
 
         public static List<ObjectInfo> SerializeLevel(bool checkSave)
         {
@@ -330,17 +410,20 @@ namespace WorldBuilderCoop.Managers
 
                 byte[] data;
                 int savedPlaceIndex;
+                int prefabIndex;
 
                 if (item2.TryGetComponent<Serialized>(out var component))
                 {
                     component.CheckSave();
                     savedPlaceIndex = component.Parameters.placeIndex;
+                    prefabIndex = component.Parameters.index;
                     data = Encoding.UTF8.GetBytes(JsonUtility.ToJson(component.Parameters));
                 }
                 else
                 {
                     var bp = new BaseParameters(item2);
                     savedPlaceIndex = bp.placeIndex;
+                    prefabIndex = bp.index;
                     data = Encoding.UTF8.GetBytes(JsonUtility.ToJson(bp));
                 }
 
@@ -348,10 +431,93 @@ namespace WorldBuilderCoop.Managers
                 {
                     objectId = networkObject.NetworkId,
                     placeIndex = savedPlaceIndex,
+                    prefabIndex = prefabIndex,
                     componentData = data
                 });
             }
             return list;
+        }
+
+        public static IEnumerator SendMapToClient(CSteamID target)
+        {
+            var objects = SerializeLevel(false);
+            yield return SendMapToClientInternal(objects, 
+                (data) => SteamNetworkManager.Instance.SendTo(target, data),
+                (data) => SteamNetworkManager.Instance.SendToAllExcept(target, data)
+            );
+        }
+
+        public static IEnumerator SendMapToClient(TcpClient target)
+        {
+            var objects = SerializeLevel(false);
+            yield return SendMapToClientInternal(objects, 
+                (data) => SteamNetworkManager.Instance.SendTo(target, data),
+                (data) => SteamNetworkManager.Instance.SendToAllExcept(target, data)
+            );
+        }
+
+        private static IEnumerator SendMapToClientInternal(List<ObjectInfo> objects, Action<byte[]> sendToTarget, Action<byte[]> sendToOthers)
+        {
+            WbLog.Debug("[MapManager] Starting Single Client Map Sync");
+            SetSyncState(true, false);
+
+            byte[] compressed = SerializeAndCompress(objects);
+            yield return SendChunks(compressed, sendToTarget);
+
+            SetSyncState(false);
+
+            // Notify target finished
+            using (var ms = new MemoryStream())
+            using (var writer = new BinaryWriter(ms))
+            {
+                writer.Write((byte)Packets.LoadMapFinished);
+                writer.Write(GetCurrentUserId());
+                writer.Write(objects.Count);
+                sendToTarget(ms.ToArray());
+            }
+            WbLog.Debug("[MapManager] Single Client Map Sync Completed");
+        }
+
+        /// <summary>
+        /// Sérialise en JSON l'état courant des paramètres d'un objet (transform + champs custom),
+        /// en suivant exactement le chemin de SerializeLevel.
+        /// </summary>
+        public static string SerializeObjectParametersJson(Transform t)
+        {
+            if (t.TryGetComponent<Serialized>(out var component))
+            {
+                component.CheckSave();
+                return JsonUtility.ToJson(component.Parameters);
+            }
+            return JsonUtility.ToJson(new BaseParameters(t));
+        }
+
+        /// <summary>
+        /// Applique un blob JSON de paramètres à un objet existant (réplication d'une édition d'inspecteur).
+        /// Réutilise BaseParameters.UpdateObject, qui gère les champs custom via ses overrides.
+        /// </summary>
+        public static void ApplyObjectParametersJson(Transform t, string json)
+        {
+            if (t == null || string.IsNullOrEmpty(json)) return;
+
+            Type type = typeof(BaseParameters);
+            if (t.TryGetComponent<Serialized>(out var component))
+            {
+                type = component.Parameters.GetType();
+            }
+
+            var finalParams = (BaseParameters)JsonUtility.FromJson(json, type);
+            if (finalParams == null) return;
+
+            finalParams.UpdateObject(t);
+
+            // Aligner l'interpolateur (s'il existe) pour éviter qu'il ne "ramène" l'objet
+            // vers une cible de déplacement antérieure.
+            var interpolator = t.GetComponent<WorldBuilderCoop.GameObjectInterpolator>();
+            if (interpolator != null)
+            {
+                interpolator.SetTarget(t.position, t.rotation, t.localScale);
+            }
         }
 
         public static byte[] DecompressData(byte[] compressedData)

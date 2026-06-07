@@ -18,12 +18,12 @@ namespace WorldBuilderCoop
         public const float SyncInterval = 1f / TargetFPS;
         public const float PositionThreshold = 0.05f;
         public const float RotationThreshold = 1f;
-        public static List<int> blacklistSelection = new List<int>();
+        public static List<long> blacklistSelection = new List<long>();
         public static bool IsRemoteAction = false;
 
-        public static void placeObject(Vector3 position, Quaternion rotation, Vector3 scale, int objectId, string prefabPath, int prefabIndex = -1)
+        public static void placeObject(Vector3 position, Quaternion rotation, Vector3 scale, long objectId, string prefabPath, int prefabIndex = -1)
         {
-            ConsoleBase.WriteLine($"[WorldBuilderSync] placeObject called: ID={objectId}, Path={prefabPath}, Index={prefabIndex}");
+            WbLog.Debug($"[WorldBuilderSync] placeObject called: ID={objectId}, Path={prefabPath}, Index={prefabIndex}");
             try
             {
                 var sceneManager = MonoBehaviourSingleton<SceneManager>.Instance;
@@ -58,13 +58,13 @@ namespace WorldBuilderCoop
 
                 if (Core.networkObjectManager.HasNetworkObject(objectId))
                 {
-                    ConsoleBase.WriteLine($"[WorldBuilderSync] Object {objectId} already exists. Skipping.");
+                    WbLog.Debug($"[WorldBuilderSync] Object {objectId} already exists. Skipping.");
                     // Object already exists, do not duplicate
                     // Maybe we should update it? But placeObject usually means NEW object.
                     return;
                 }
 
-                ConsoleBase.WriteLine($"[WorldBuilderSync] Instantiating object {objectId}");
+                WbLog.Debug($"[WorldBuilderSync] Instantiating object {objectId}");
                 GameObject gameObject = sceneManager.InstantiateEditor(prefab, sceneManager.currentPlace, position, rotation);
                 gameObject.transform.localScale = scale;
 
@@ -81,7 +81,7 @@ namespace WorldBuilderCoop
             }
         }
 
-        public static void destroyObject(List<int> objectIds)
+        public static void destroyObject(List<long> objectIds)
         {
             if (objectIds == null || objectIds.Count == 0)
                 return;
@@ -101,19 +101,19 @@ namespace WorldBuilderCoop
             }
         }
 
-        public static void updateObject(List<int> objectIds, Vector3 position, Quaternion rotation, Vector3 scale, byte[] componentData)
+        public static void updateObject(List<NetTransform> transforms)
         {
-            if (objectIds == null || objectIds.Count == 0) return;
+            if (transforms == null || transforms.Count == 0) return;
 
-            foreach (int id in objectIds)
+            foreach (var t in transforms)
             {
-                NetworkObject networkObject = Core.networkObjectManager.GetNetworkObject(id);
+                NetworkObject networkObject = Core.networkObjectManager.GetNetworkObject(t.objectId);
 
                 if (networkObject == null)
                 {
                     var all = UnityEngine.Object.FindObjectsByType<NetworkObject>(FindObjectsSortMode.None);
-                    networkObject = all.FirstOrDefault(x => x.NetworkId == id);
-                    if (networkObject != null) Core.networkObjectManager.RegisterNetworkObject(id, networkObject);
+                    networkObject = all.FirstOrDefault(x => x.NetworkId == t.objectId);
+                    if (networkObject != null) Core.networkObjectManager.RegisterNetworkObject(t.objectId, networkObject);
                 }
 
                 if (networkObject != null && networkObject.GetComponent<UserAvatar>() == null)
@@ -124,22 +124,65 @@ namespace WorldBuilderCoop
                     var interpolator = networkObject.GetComponent<GameObjectInterpolator>();
                     if (interpolator == null) interpolator = networkObject.gameObject.AddComponent<GameObjectInterpolator>();
 
-                    interpolator.SetTarget(position, rotation, scale);
+                    interpolator.SetTarget(t.position, t.rotation, t.scale);
                 }
             }
         }
 
-        public static void AddToSelection(int userId, int objectId)
+        public static void DuplicateObject(long sourceId, long newId, Vector3 position, Quaternion rotation, Vector3 scale)
+        {
+            try
+            {
+                var sourceObj = Core.networkObjectManager.GetNetworkObject(sourceId);
+                if (sourceObj == null)
+                {
+                    ConsoleBase.WriteError($"[WorldBuilderSync] Source object {sourceId} not found for duplication");
+                    return;
+                }
+
+                if (Core.networkObjectManager.HasNetworkObject(newId))
+                {
+                    ConsoleBase.WriteError($"[WorldBuilderSync] New ID {newId} already exists. Skipping duplicate.");
+                    return;
+                }
+
+                // Conserver le parent (le "place" de l'éditeur) de la source.
+                GameObject newGo = UnityEngine.Object.Instantiate(sourceObj.gameObject, position, rotation, sourceObj.transform.parent);
+                newGo.transform.localScale = scale;
+                // Clean name if needed, but Unity adds (Clone) automatically. 
+                // We might want to keep it consistent or remove double (Clone).
+                
+                var netObj = newGo.GetComponent<NetworkObject>();
+                if (netObj == null) netObj = newGo.AddComponent<NetworkObject>();
+
+                netObj.NetworkId = newId;
+                netObj.PrefabPath = sourceObj.PrefabPath;
+                netObj.PrefabIndex = sourceObj.PrefabIndex;
+
+                Core.networkObjectManager.RegisterNetworkObject(newId, netObj);
+            }
+            catch (Exception ex)
+            {
+                ConsoleBase.WriteError($"[WorldBuilderSync] DuplicateObject error: {ex.Message}");
+            }
+        }
+
+        public static void AddToSelection(int userId, long objectId)
         {
             NetworkObject networkObject = Core.networkObjectManager.GetNetworkObject(objectId);
             if (networkObject != null && BlEditorManager.Instance.selectedTransforms.Contains(networkObject.transform))
             {
                 blacklistSelection.Add(networkObject.NetworkId);
+                // Résolution de conflit : un autre joueur a sélectionné cet objet, on le retire
+                // de NOTRE sélection. IsRemoteAction empêche le patch RemoveFromSelection de
+                // re-broadcaster cette désélection (sinon écho secondaire).
+                IsRemoteAction = true;
                 BlEditorManager.Instance.RemoveFromSelection(networkObject.transform);
+                IsRemoteAction = false;
             }
         }
 
-        public static void RemoveFromSelection(int userId, int objectId)
+        public static void RemoveFromSelection(int userId, long objectId)
         {
             NetworkObject networkObject = Core.networkObjectManager.GetNetworkObject(objectId);
             if (networkObject != null)
@@ -181,13 +224,6 @@ namespace WorldBuilderCoop
             }
         }
 
-        private static int GetCurrentUserId()
-        {
-            if (SteamNetworkManager.Instance != null && SteamNetworkManager.Instance.IsLocalMode())
-            {
-                return LocalUserManager.GetLocalUserId();
-            }
-            return Steamworks.SteamUser.GetSteamID().m_SteamID.GetHashCode();
-        }
+        private static int GetCurrentUserId() => NetworkIdentity.GetUserId();
     }
 }

@@ -3,6 +3,7 @@ using ModLoader;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using WorldBuilderCoop.Events;
 using WorldBuilderCoop.Managers;
 
 namespace WorldBuilderCoop.Network
@@ -22,7 +23,7 @@ namespace WorldBuilderCoop.Network
 
         public static void HandlePlaceObject(byte[] data)
         {
-            ConsoleBase.WriteLine("[PacketHandler] Handling PlaceObject");
+            WbLog.Debug("[PacketHandler] Handling PlaceObject");
             if (MapManager.IsLoading)
             {
                 byte[] dataCopy = (byte[])data.Clone();
@@ -48,8 +49,8 @@ namespace WorldBuilderCoop.Network
                         float sx = reader.ReadSingle();
                         float sy = reader.ReadSingle();
                         float sz = reader.ReadSingle();
-                        int objectId = reader.ReadInt32();
-                        
+                        long objectId = reader.ReadInt64();
+
                         bool hasPath = reader.ReadBoolean();
                         string prefabPath = null;
                         int prefabIndex = -1;
@@ -96,11 +97,11 @@ namespace WorldBuilderCoop.Network
                     {
                         reader.ReadByte(); // Skip packet type
                         int count = reader.ReadInt32();
-                        List<int> objectIds = new List<int>();
+                        List<long> objectIds = new List<long>();
 
                         for (int i = 0; i < count; i++)
                         {
-                            objectIds.Add(reader.ReadInt32());
+                            objectIds.Add(reader.ReadInt64());
                         }
 
                         if (BlEditorManager.Instance != null)
@@ -127,80 +128,137 @@ namespace WorldBuilderCoop.Network
                 return;
             }
 
-            using (var ms = new MemoryStream(data))
+            try
             {
-                using (var reader = new BinaryReader(ms))
+                using (var ms = new MemoryStream(data))
                 {
-                    byte packetType = reader.ReadByte();
-
-                    int objectIdsCount = reader.ReadInt32();
-                    List<int> objectIds = new List<int>();
-                    for (int i = 0; i < objectIdsCount; i++)
+                    using (var reader = new BinaryReader(ms))
                     {
-                        objectIds.Add(reader.ReadInt32());
-                    }
+                        reader.ReadByte(); // PacketType
 
-                    float px = reader.ReadSingle();
-                    float py = reader.ReadSingle();
-                    float pz = reader.ReadSingle();
-                    Vector3 position = new Vector3(px, py, pz);
+                        int count = reader.ReadInt32();
+                        var transforms = new List<NetTransform>(count);
+                        for (int i = 0; i < count; i++)
+                        {
+                            var t = new NetTransform
+                            {
+                                objectId = reader.ReadInt64(),
+                                position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
+                                rotation = new Quaternion(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
+                                scale = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle())
+                            };
+                            transforms.Add(t);
+                        }
 
-                    float rx = reader.ReadSingle();
-                    float ry = reader.ReadSingle();
-                    float rz = reader.ReadSingle();
-                    float rw = reader.ReadSingle();
-                    Quaternion rotation = new Quaternion(rx, ry, rz, rw);
-
-                    float sx = reader.ReadSingle();
-                    float sy = reader.ReadSingle();
-                    float sz = reader.ReadSingle();
-                    Vector3 scale = new Vector3(sx, sy, sz);
-
-                    int componentDataLength = reader.ReadInt32();
-                    byte[] componentData;
-
-                    if (componentDataLength > 0)
-                    {
-                        componentData = reader.ReadBytes(componentDataLength);
-                    }
-                    else
-                    {
-                        componentData = new byte[0];
-                    }
-
-                    if (objectIds.Count > 0)
-                    {
-                        WorldBuilderSync.updateObject(objectIds, position, rotation, scale, componentData);
+                        WorldBuilderSync.updateObject(transforms);
                     }
                 }
+            }
+            catch (System.Exception ex)
+            {
+                ConsoleBase.WriteError("Error handling update object: " + ex.Message);
+            }
+        }
+
+        public static void HandleUpdateComponent(byte[] data)
+        {
+            if (MapManager.IsLoading)
+            {
+                byte[] dataCopy = (byte[])data.Clone();
+                _bufferedPackets.Enqueue(() => HandleUpdateComponent(dataCopy));
+                return;
+            }
+
+            try
+            {
+                using (var ms = new MemoryStream(data))
+                using (var reader = new BinaryReader(ms))
+                {
+                    reader.ReadByte(); // Packet type
+                    long objectId = reader.ReadInt64();
+                    string json = reader.ReadString();
+
+                    NetworkObject netObj = Core.networkObjectManager.GetNetworkObject(objectId);
+                    if (netObj == null || netObj.transform == null)
+                    {
+                        ConsoleBase.WriteError($"[PacketHandler] UpdateComponent: object {objectId} introuvable");
+                        return;
+                    }
+
+                    WorldBuilderSync.IsRemoteAction = true;
+                    try
+                    {
+                        MapManager.ApplyObjectParametersJson(netObj.transform, json);
+                    }
+                    finally
+                    {
+                        WorldBuilderSync.IsRemoteAction = false;
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                ConsoleBase.WriteError("Error handling update component: " + ex.Message);
             }
         }
 
         public static void HandleLoadMap(byte[] data, int length)
         {
+            // Already handled by SteamNetworkManager queueing system, but if called directly:
+            WbLog.Debug("[PacketHandler] HandleLoadMap called (chunk processing)");
+            
+            using (var ms = new MemoryStream(data))
+            using (var reader = new BinaryReader(ms))
+            {
+                reader.ReadByte(); // Skip packet type
+                int totalSize = reader.ReadInt32();
+                int totalChunks = reader.ReadInt32();
+                int chunkIndex = reader.ReadInt32();
+                int offset = reader.ReadInt32();
+                int chunkSize = reader.ReadInt32();
+                byte[] chunkData = reader.ReadBytes(chunkSize);
+
+                MapManager.HandleIncomingChunk(totalSize, totalChunks, chunkIndex, offset, chunkData);
+            }
+        }
+
+        public static void HandleAddToSelection(byte[] data, int length)
+        {
             using (var ms = new MemoryStream(data))
             {
                 using (var reader = new BinaryReader(ms))
                 {
-                    byte packetType = reader.ReadByte();
+                    reader.ReadByte(); // Type
+                    int userId = reader.ReadInt32();
+                    long objectId = reader.ReadInt64();
 
-                    // New Chunk Format: TotalSize, Offset, Length
-                    // Ensure this matches the Sender logic
-                    int totalSize = reader.ReadInt32();
-                    int offset = reader.ReadInt32();
-                    int chunkLength = reader.ReadInt32();
+                    WorldBuilderSync.AddToSelection(userId, objectId);
+                    Core.networkObjectManager.MarkAsSelectedByUser(userId, objectId);
+                    // Pas de RaiseSelectionChanged : on applique localement, on ne re-broadcast pas (écho).
+                }
+            }
+        }
 
-                    byte[] chunkData = reader.ReadBytes(chunkLength);
+        public static void HandleRemoveFromSelection(byte[] data, int length)
+        {
+            using (var ms = new MemoryStream(data))
+            {
+                using (var reader = new BinaryReader(ms))
+                {
+                    reader.ReadByte(); // Type
+                    int userId = reader.ReadInt32();
+                    long objectId = reader.ReadInt64();
 
-                    // Pass to MapManager
-                    MapManager.HandleIncomingChunk(totalSize, offset, chunkData);
+                    WorldBuilderSync.RemoveFromSelection(userId, objectId);
+                    Core.networkObjectManager.UnmarkAsSelectedByUser(userId, objectId);
+                    // Pas de RaiseSelectionChanged : application locale uniquement (pas d'écho).
                 }
             }
         }
 
         public static void HandlePlayerSync(byte[] data)
         {
-            ConsoleBase.WriteLine("[PacketHandler] Handling PlayerSync");
+            // WbLog.Debug("[PacketHandler] Handling PlayerSync");
             using (var ms = new MemoryStream(data))
             {
                 using (var reader = new BinaryReader(ms))
@@ -211,13 +269,12 @@ namespace WorldBuilderCoop.Network
                     Quaternion rotation = new Quaternion(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
 
                     int placeIndex = 0;
-                    // Check if we have more data (backwards compatibility or new field)
                     if (ms.Position < ms.Length)
                     {
                         placeIndex = reader.ReadInt32();
                     }
 
-                    ConsoleBase.WriteLine($"[PacketHandler] Received player sync for user {userId} at {position}");
+                    // WbLog.Debug($"[PacketHandler] Received player sync for user {userId} at {position}");
                     PlayerSyncHelper.userSync(userId, position, rotation, placeIndex);
                 }
             }
@@ -229,134 +286,36 @@ namespace WorldBuilderCoop.Network
             {
                 using (var reader = new BinaryReader(ms))
                 {
-                    byte packetType = reader.ReadByte();
-                    int userIdToRemove = reader.ReadInt32();
-
-                    PlayerSyncHelper.removeUser(userIdToRemove);
-                }
-            }
-        }
-
-        public static void HandleAddToSelection(byte[] data, int length)
-        {
-            if (MapManager.IsLoading)
-            {
-                byte[] dataCopy = (byte[])data.Clone();
-                _bufferedPackets.Enqueue(() => HandleAddToSelection(dataCopy, length));
-                return;
-            }
-
-            using (var ms = new MemoryStream(data))
-            {
-                using (var reader = new BinaryReader(ms))
-                {
-                    byte packetType = reader.ReadByte();
+                    reader.ReadByte();
                     int userId = reader.ReadInt32();
-                    int objectId = reader.ReadInt32();
-                    WorldBuilderSync.AddToSelection(userId, objectId);
-                }
-            }
-        }
-
-        public static void HandleRemoveFromSelection(byte[] data, int length)
-        {
-            using (var ms = new MemoryStream(data))
-            {
-                using (var reader = new BinaryReader(ms))
-                {
-                    byte packetType = reader.ReadByte();
-                    int userId = reader.ReadInt32();
-                    int objectId = reader.ReadInt32();
-                    WorldBuilderSync.RemoveFromSelection(userId, objectId);
+                    PlayerSyncHelper.RemoveUser(userId);
                 }
             }
         }
 
         public static void HandleLoadMapFinished(byte[] data)
         {
-            using (var ms = new MemoryStream(data))
-            {
-                using (var reader = new BinaryReader(ms))
-                {
-                    byte packetType = reader.ReadByte();
-                    int userId = reader.ReadInt32();
-                    int loadedCount = reader.ReadInt32();
-
-                    ConsoleBase.WriteLine($"[PacketHandler] User {userId} finished loading map. Total objects: {loadedCount}");
-                }
-            }
+            WbLog.Debug("[PacketHandler] Map load finished signal received.");
+            MapManager.FinishLoading();
         }
 
         public static void HandleUndo(byte[] data)
         {
-            WorldBuilderSync.IsRemoteAction = true;
-            try
+            if (BlEditorManager.Instance != null)
             {
-                if (BlEditorManager.Instance != null)
-                {
-                    BlEditorManager.Instance.Undo();
-                }
-            }
-            finally
-            {
+                WorldBuilderSync.IsRemoteAction = true;
+                BlEditorManager.Instance.Undo();
                 WorldBuilderSync.IsRemoteAction = false;
             }
         }
 
         public static void HandleRedo(byte[] data)
         {
-            WorldBuilderSync.IsRemoteAction = true;
-            try
+            if (BlEditorManager.Instance != null)
             {
-                if (BlEditorManager.Instance != null)
-                {
-                    BlEditorManager.Instance.Redo();
-                }
-            }
-            finally
-            {
+                WorldBuilderSync.IsRemoteAction = true;
+                BlEditorManager.Instance.Redo();
                 WorldBuilderSync.IsRemoteAction = false;
-            }
-        }
-
-        public static void HandleDuplicate(byte[] data)
-        {
-            try
-            {
-                using (var ms = new MemoryStream(data))
-                using (var reader = new BinaryReader(ms))
-                {
-                    reader.ReadByte(); // Type
-                    int count = reader.ReadInt32();
-                    List<int> objectIds = new List<int>();
-                    for (int i = 0; i < count; i++)
-                    {
-                        objectIds.Add(reader.ReadInt32());
-                    }
-
-                    if (BlEditorManager.Instance != null)
-                    {
-                        BlEditorManager.Instance.AppendHistory();
-                    }
-
-                    // For duplication, we don't have the new IDs yet if we were to strictly follow logic,
-                    // but WorldBuilderSync.DuplicateObject (if it existed) would need to know them.
-                    // Actually, the sender sent the IDs of the objects to BE duplicated.
-                    // Wait, BlEditorManager.DuplicateSelection creates NEW objects.
-                    // The sync logic for Duplicate is: Sender duplicates, gets new IDs, sends "PlaceObject" for each new item?
-                    // OR Sender sends "Duplicate these IDs".
-                    // If "Duplicate these IDs", receivers will generate NEW IDs locally -> DESYNC of IDs.
-                    
-                    // The Duplicate implementation in BlEditorManagerPatches sends Packets.Duplicate with the SOURCE IDs.
-                    // This is problematic for ID sync.
-                    // However, based on previous turn, we only implemented the Packet handling structure.
-                    // If we want correct ID sync, Duplicate should probably be treated as "PlaceObject" for the new items.
-                    // But for now, let's just ensure History is saved.
-                }
-            }
-            catch (System.Exception ex)
-            {
-                ConsoleBase.WriteError("Error handling duplicate: " + ex.Message);
             }
         }
 
@@ -365,6 +324,74 @@ namespace WorldBuilderCoop.Network
             if (BlEditorManager.Instance != null)
             {
                 BlEditorManager.Instance.AppendHistory();
+            }
+        }
+
+        public static void HandleDuplicate(byte[] data)
+        {
+            using (var ms = new MemoryStream(data))
+            using (var reader = new BinaryReader(ms))
+            {
+                reader.ReadByte();
+                long sourceId = reader.ReadInt64();
+                long newId = reader.ReadInt64();
+                Vector3 pos = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+                Quaternion rot = new Quaternion(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+                Vector3 scale = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+
+                WorldBuilderSync.DuplicateObject(sourceId, newId, pos, rot, scale);
+            }
+        }
+
+        public static void HandleStartMapSync(byte[] data)
+        {
+            // Reverted: MapManager.SetSyncState(true);
+        }
+
+        public static void HandleEndMapSync(byte[] data)
+        {
+            // Reverted: MapManager.SetSyncState(false);
+        }
+
+        public static void HandleBatchAddToSelection(byte[] data)
+        {
+            using (var ms = new MemoryStream(data))
+            using (var reader = new BinaryReader(ms))
+            {
+                reader.ReadByte(); // Packet type
+                int userId = reader.ReadInt32();
+                int count = reader.ReadInt32();
+
+                for (int i = 0; i < count; i++)
+                {
+                    long objectId = reader.ReadInt64();
+                    WorldBuilderSync.AddToSelection(userId, objectId);
+                    Core.networkObjectManager.MarkAsSelectedByUser(userId, objectId);
+                    // Pas de RaiseSelectionChanged : application locale uniquement (pas d'écho).
+                }
+            }
+        }
+
+        public static void HandleDuplicateSelection(byte[] data)
+        {
+            using (var ms = new MemoryStream(data))
+            using (var reader = new BinaryReader(ms))
+            {
+                reader.ReadByte(); // Packet type
+                reader.ReadInt32(); // userId (non utilisé : le mapping est explicite)
+                int count = reader.ReadInt32();
+
+                for (int i = 0; i < count; i++)
+                {
+                    long sourceId = reader.ReadInt64();
+                    long newId = reader.ReadInt64();
+                    Vector3 pos = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+                    Quaternion rot = new Quaternion(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+                    Vector3 scale = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+
+                    // Réutilise la logique commune (recherche source, instanciation, enregistrement).
+                    WorldBuilderSync.DuplicateObject(sourceId, newId, pos, rot, scale);
+                }
             }
         }
     }

@@ -36,12 +36,12 @@ namespace WorldBuilderCoop.Behavior
                 if (BrokeProtocol.Client.Builder.BlSceneCamera.Instance != null)
                 {
                     _targetTransform = BrokeProtocol.Client.Builder.BlSceneCamera.Instance.mTransform;
-                    // ConsoleBase.WriteLine("[PlayerSyncTracker] Found BlSceneCamera");
+                    // WbLog.Debug("[PlayerSyncTracker] Found BlSceneCamera");
                 }
                 else if (Camera.main != null)
                 {
                     _targetTransform = Camera.main.transform;
-                    // ConsoleBase.WriteLine("[PlayerSyncTracker] Found Camera.main");
+                    // WbLog.Debug("[PlayerSyncTracker] Found Camera.main");
                 }
                 else
                 {
@@ -49,7 +49,7 @@ namespace WorldBuilderCoop.Behavior
                     if (cam != null)
                     {
                         _targetTransform = cam.transform;
-                        // ConsoleBase.WriteLine($"[PlayerSyncTracker] Found fallback Camera: {cam.name}");
+                        // WbLog.Debug($"[PlayerSyncTracker] Found fallback Camera: {cam.name}");
                     }
                 }
 
@@ -57,7 +57,7 @@ namespace WorldBuilderCoop.Behavior
                 {
                     if (Time.time - _lastDebugTime > 5.0f)
                     {
-                        // ConsoleBase.WriteLine("[PlayerSyncTracker] Waiting for Camera...");
+                        // WbLog.Debug("[PlayerSyncTracker] Waiting for Camera...");
                         _lastDebugTime = Time.time;
                     }
                     return; // Still no target, cannot sync
@@ -91,7 +91,7 @@ namespace WorldBuilderCoop.Behavior
             {
                 if (Time.time - _lastDebugTime > 5.0f)
                 {
-                    // ConsoleBase.WriteLine("[PlayerSyncTracker] Not connected to network, skipping sync.");
+                    // WbLog.Debug("[PlayerSyncTracker] Not connected to network, skipping sync.");
                     _lastDebugTime = Time.time;
                 }
                 return;
@@ -101,19 +101,11 @@ namespace WorldBuilderCoop.Behavior
             int userId = GetCurrentUserId();
             int placeIndex = BrokeProtocol.Managers.SceneManager.Instance != null ? BrokeProtocol.Managers.SceneManager.Instance.currentPlace : 0;
 
-            // ConsoleBase.WriteLine($"[PlayerSyncTracker] Sending sync packet for user {userId} at {_targetTransform.position}");
+            // WbLog.Debug($"[PlayerSyncTracker] Sending sync packet for user {userId} at {_targetTransform.position}");
             byte[] data = PlayerSyncHelper.SerializePlayerSync(userId, _targetTransform.position, _targetTransform.rotation, placeIndex);
             SteamNetworkManager.Instance.SendToAll(data);
         }
 
-        private int GetCurrentUserId()
-        {
-            var steamNetManager = SteamNetworkManager.Instance;
-            if (steamNetManager != null && steamNetManager.IsLocalMode())
-            {
-                return LocalUserManager.GetLocalUserId();
-            }
-            return Steamworks.SteamUser.GetSteamID().m_SteamID.GetHashCode();
-        }
+        private int GetCurrentUserId() => NetworkIdentity.GetUserId();
     }
 }

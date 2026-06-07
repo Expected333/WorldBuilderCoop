@@ -1,154 +1,93 @@
-using BrokeProtocol.Client.Builder;
-using System.Collections;
 using System.Collections.Generic;
-using System.Reflection;
+using System.Runtime.CompilerServices;
+using BrokeProtocol.Managers;
+using BrokeProtocol.Parameters;
+using BrokeProtocol.Utility;
+using ModLoader;
 using UnityEngine;
 using WorldBuilderCoop.Network;
 
 namespace WorldBuilderCoop.Behavior
 {
+    /// <summary>
+    /// Préserve les NetworkId à travers l'undo/redo.
+    ///
+    /// L'undo du jeu reconstruit toute la scène (Clear + DeserializeLevel) à partir d'un
+    /// snapshot (List&lt;BaseParameters&gt;) : les NetworkObject (ajoutés par le mod) sont perdus.
+    ///
+    /// Approche : on associe chaque snapshot à la liste ORDONNÉE des NetworkId, capturée dans
+    /// l'ordre AllTransforms() — exactement l'ordre dans lequel le snapshot a été sérialisé et
+    /// dans lequel DeserializeLevel recrée les objets. La restauration se fait donc par INDEX
+    /// (déterministe, exact), et non par appariement flou nom+position.
+    ///
+    /// La ConditionalWeakTable est indexée par référence de snapshot : quand le jeu retire un
+    /// snapshot de son historique, l'entrée est automatiquement collectée par le GC.
+    /// </summary>
     public class WorldBuilderHistoryManager : MonoBehaviour
     {
         public static WorldBuilderHistoryManager Instance;
 
-        private void Awake()
+        private readonly ConditionalWeakTable<object, List<long>> _idsBySnapshot
+            = new ConditionalWeakTable<object, List<long>>();
+
+        private void Awake() => Instance = this;
+
+        /// <summary>
+        /// Capture les NetworkId courants (ordre AllTransforms) et les associe au snapshot
+        /// qui vient d'être produit par SceneManager.SerializeLevel(checkSave:false).
+        /// </summary>
+        public void AssociateSnapshot(List<BaseParameters> snapshot)
         {
-            Instance = this;
-        }
+            if (snapshot == null) return;
+            var sm = MonoBehaviourSingleton<SceneManager>.Instance;
+            if (sm == null) return;
 
-        [System.Serializable]
-        public struct NetworkSnapshotItem
-        {
-            public int NetworkId;
-            public Vector3 Position;
-            public Quaternion Rotation;
-            public Vector3 Scale;
-            public string PrefabName;
-            public string PrefabPath;
-            public int PrefabIndex;
-        }
-
-        private List<List<NetworkSnapshotItem>> history = new List<List<NetworkSnapshotItem>>();
-        private FieldInfo historyIndexField;
-        private FieldInfo historyField;
-        private int lastEditorHistoryCount = 0;
-
-        private void InitializeReflection()
-        {
-            historyIndexField = typeof(BlEditorManager).GetField("historyIndex", BindingFlags.NonPublic | BindingFlags.Instance);
-            historyField = typeof(BlEditorManager).GetField("history", BindingFlags.NonPublic | BindingFlags.Instance);
-        }
-
-        public void RecordState(BlEditorManager editor, bool undone)
-        {
-            if (historyIndexField == null) InitializeReflection();
-
-            IList editorHistory = (IList)historyField.GetValue(editor);
-            int currentCount = editorHistory.Count;
-
-            // Sync list length (trim forward history)
-            if (currentCount < history.Count)
+            var ids = new List<long>();
+            foreach (Transform t in sm.AllTransforms())
             {
-                history.RemoveRange(currentCount, history.Count - currentCount);
+                if (!t.TryGetComponent<NetworkObject>(out var netObj))
+                {
+                    netObj = t.gameObject.AddComponent<NetworkObject>();
+                    Core.networkObjectManager.AddNetworkObject(netObj); // alloue un id
+                }
+                ids.Add(netObj.NetworkId);
             }
 
-            if (!undone)
-            {
-                bool shouldAdd = false;
-                bool shouldShift = false;
-
-                if (currentCount > history.Count)
-                {
-                    shouldAdd = true;
-                }
-                else if (currentCount == history.Count && currentCount == 10) // Max history size
-                {
-                    shouldShift = true;
-                }
-
-                if (shouldShift)
-                {
-                    history.RemoveAt(0);
-                    shouldAdd = true;
-                }
-
-                if (shouldAdd)
-                {
-                    List<NetworkSnapshotItem> snapshot = new List<NetworkSnapshotItem>();
-                    var objects = FindObjectsOfType<NetworkObject>();
-
-                    foreach (var obj in objects)
-                    {
-                        snapshot.Add(new NetworkSnapshotItem
-                        {
-                            NetworkId = obj.NetworkId,
-                            Position = obj.transform.position,
-                            Rotation = obj.transform.rotation,
-                            Scale = obj.transform.localScale,
-                            PrefabName = obj.name.Replace("(Clone)", "").Trim(),
-                            PrefabPath = obj.PrefabPath,
-                            PrefabIndex = obj.PrefabIndex
-                        });
-                    }
-                    history.Add(snapshot);
-                }
-            }
-
-            lastEditorHistoryCount = currentCount;
+            _idsBySnapshot.Remove(snapshot);
+            _idsBySnapshot.Add(snapshot, ids);
         }
 
-        public void RestoreState(BlEditorManager editor)
+        /// <summary>
+        /// Réassigne les NetworkId par index après qu'un snapshot a été restauré (undo/redo).
+        /// </summary>
+        public void RestoreSnapshot(List<BaseParameters> snapshot)
         {
-            if (historyIndexField == null) InitializeReflection();
-            int index = (int)historyIndexField.GetValue(editor);
+            if (snapshot == null) return;
 
-            if (index >= 0 && index < history.Count)
+            if (!_idsBySnapshot.TryGetValue(snapshot, out var ids))
             {
-                var snapshot = history[index];
+                ConsoleBase.WriteError("[History] Snapshot non associé : NetworkId non restaurés (désync possible)");
+                return;
+            }
 
-                var allTransforms = BrokeProtocol.Managers.SceneManager.Instance.ActiveGameObjects();
-                List<Transform> candidates = new List<Transform>();
-                foreach (var t in allTransforms)
+            var sm = MonoBehaviourSingleton<SceneManager>.Instance;
+            if (sm == null) return;
+
+            var transforms = sm.AllTransforms();
+            if (transforms.Count != ids.Count)
+            {
+                ConsoleBase.WriteError($"[History] Restore: {transforms.Count} objets vs {ids.Count} ids — appariement partiel");
+            }
+
+            int n = Mathf.Min(transforms.Count, ids.Count);
+            for (int i = 0; i < n; i++)
+            {
+                Transform t = transforms[i];
+                if (!t.TryGetComponent<NetworkObject>(out var netObj))
                 {
-                    candidates.Add(t);
+                    netObj = t.gameObject.AddComponent<NetworkObject>();
                 }
-
-                foreach (var snap in snapshot)
-                {
-                    Transform bestMatch = null;
-                    float bestDist = 0.5f;
-
-                    for (int i = 0; i < candidates.Count; i++)
-                    {
-                        var t = candidates[i];
-                        string tName = t.name.Replace("(Clone)", "").Trim();
-                        if (tName != snap.PrefabName) continue;
-
-                        float dist = Vector3.Distance(t.position, snap.Position);
-                        if (dist < bestDist)
-                        {
-                            bestDist = dist;
-                            bestMatch = t;
-                        }
-                    }
-
-                    if (bestMatch != null)
-                    {
-                        var netObj = bestMatch.GetComponent<NetworkObject>();
-                        if (netObj == null) netObj = bestMatch.gameObject.AddComponent<NetworkObject>();
-                        netObj.NetworkId = snap.NetworkId;
-                        netObj.PrefabIndex = snap.PrefabIndex;
-                        netObj.PrefabPath = snap.PrefabPath;
-
-                        // Register with manager
-                        if (Core.networkObjectManager != null)
-                        {
-                            Core.networkObjectManager.RegisterNetworkObject(netObj.NetworkId, netObj);
-                        }
-
-                        candidates.Remove(bestMatch);
-                    }
-                }
+                Core.networkObjectManager.RegisterNetworkObject(ids[i], netObj);
             }
         }
     }

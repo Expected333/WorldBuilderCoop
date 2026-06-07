@@ -1,6 +1,7 @@
-﻿using BrokeProtocol.Managers;
+using BrokeProtocol.Managers;
 using ModLoader;
 using UnityEngine.UIElements;
+using WorldBuilderCoop;
 using WorldBuilderCoop.UI;
 
 internal class MainUI
@@ -49,12 +50,12 @@ internal class MainUI
         if (SteamNetworkManager.Instance != null)
         {
             SteamNetworkManager.Instance.SetNetworkMode(mode);
-            ConsoleBase.WriteLine("[WorldBuilder] Network mode set to: " + mode);
+            WbLog.Debug("[WorldBuilder] Network mode set to: " + mode);
 
             if (mode == NetworkMode.Local)
             {
                 // LOCAL mode: directly connect (Host or Client automatically)
-                ConsoleBase.WriteLine("[WorldBuilder] LOCAL mode - auto connecting...");
+                WbLog.Debug("[WorldBuilder] LOCAL mode - auto connecting...");
                 ConnectedUI.createDisconnectBtn(sceneManager);
             }
             else
@@ -105,7 +106,7 @@ internal class MainUI
         if (SteamNetworkManager.Instance != null)
         {
             SteamNetworkManager.Instance.CreateLobby(8);
-            ConsoleBase.WriteLine("[WorldBuilder] Creating lobby...");
+            WbLog.Debug("[WorldBuilder] Creating lobby...");
         }
         else
         {

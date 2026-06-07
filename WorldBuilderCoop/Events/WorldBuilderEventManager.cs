@@ -10,7 +10,7 @@ namespace WorldBuilderCoop.Events
     // ============ EVENT ARGUMENTS ============
     public class ObjectPlacedEventArgs : EventArgs
     {
-        public int ObjectId { get; set; }
+        public long ObjectId { get; set; }
         public string PrefabPath { get; set; }
         public int PrefabIndex { get; set; } = -1;
         public Vector3 Position { get; set; }
@@ -20,21 +20,28 @@ namespace WorldBuilderCoop.Events
 
     public class ObjectMovedEventArgs : EventArgs
     {
-        public List<int> ObjectIds { get; set; }
+        // Transform propre à chaque objet (corrige le déplacement multi-sélection).
+        public List<NetTransform> Transforms { get; set; }
+    }
+
+    public class ObjectRemovedEventArgs : EventArgs
+    {
+        public List<long> ObjectIds { get; set; }
+    }
+
+    public class ObjectDuplicatedEventArgs : EventArgs
+    {
+        public long SourceId { get; set; }
+        public long NewId { get; set; }
         public Vector3 Position { get; set; }
         public Quaternion Rotation { get; set; }
         public Vector3 Scale { get; set; }
     }
 
-    public class ObjectRemovedEventArgs : EventArgs
-    {
-        public List<int> ObjectIds { get; set; }
-    }
-
     public class SelectionChangedEventArgs : EventArgs
     {
         public int UserId { get; set; }
-        public int ObjectId { get; set; }
+        public long ObjectId { get; set; }
         public bool IsSelected { get; set; }
     }
 
@@ -52,6 +59,7 @@ namespace WorldBuilderCoop.Events
         public event EventHandler<ObjectPlacedEventArgs> OnObjectPlaced;
         public event EventHandler<ObjectMovedEventArgs> OnObjectMoved;
         public event EventHandler<ObjectRemovedEventArgs> OnObjectRemoved;
+        public event EventHandler<ObjectDuplicatedEventArgs> OnObjectDuplicated;
         public event EventHandler<SelectionChangedEventArgs> OnSelectionChanged;
         public event EventHandler<PlayerMovedEventArgs> OnPlayerMoved;
 
@@ -73,7 +81,7 @@ namespace WorldBuilderCoop.Events
         }
 
         // ============ INVOKEURS ============
-        public void RaiseObjectPlaced(int objectId, string prefabPath, Vector3 position, Quaternion rotation, Vector3 scale, int prefabIndex = -1)
+        public void RaiseObjectPlaced(long objectId, string prefabPath, Vector3 position, Quaternion rotation, Vector3 scale, int prefabIndex = -1)
         {
             OnObjectPlaced?.Invoke(this, new ObjectPlacedEventArgs
             {
@@ -86,18 +94,15 @@ namespace WorldBuilderCoop.Events
             });
         }
 
-        public void RaiseObjectMoved(List<int> objectIds, Vector3 position, Quaternion rotation, Vector3 scale)
+        public void RaiseObjectMoved(List<NetTransform> transforms)
         {
             OnObjectMoved?.Invoke(this, new ObjectMovedEventArgs
             {
-                ObjectIds = objectIds,
-                Position = position,
-                Rotation = rotation,
-                Scale = scale
+                Transforms = transforms
             });
         }
 
-        public void RaiseObjectRemoved(List<int> objectIds)
+        public void RaiseObjectRemoved(List<long> objectIds)
         {
             OnObjectRemoved?.Invoke(this, new ObjectRemovedEventArgs
             {
@@ -105,7 +110,19 @@ namespace WorldBuilderCoop.Events
             });
         }
 
-        public void RaiseSelectionChanged(int userId, int objectId, bool isSelected)
+        public void RaiseObjectDuplicated(long sourceId, long newId, Vector3 position, Quaternion rotation, Vector3 scale)
+        {
+            OnObjectDuplicated?.Invoke(this, new ObjectDuplicatedEventArgs
+            {
+                SourceId = sourceId,
+                NewId = newId,
+                Position = position,
+                Rotation = rotation,
+                Scale = scale
+            });
+        }
+
+        public void RaiseSelectionChanged(int userId, long objectId, bool isSelected)
         {
             OnSelectionChanged?.Invoke(this, new SelectionChangedEventArgs
             {
@@ -154,6 +171,7 @@ namespace WorldBuilderCoop.Events
             _eventManager.OnObjectPlaced += HandleObjectPlaced;
             _eventManager.OnObjectMoved += HandleObjectMoved;
             _eventManager.OnObjectRemoved += HandleObjectRemoved;
+            _eventManager.OnObjectDuplicated += HandleObjectDuplicated;
             _eventManager.OnSelectionChanged += HandleSelectionChanged;
             _eventManager.OnPlayerMoved += HandlePlayerMoved;
         }
@@ -175,7 +193,7 @@ namespace WorldBuilderCoop.Events
         {
             try
             {
-                byte[] data = SerializeUpdateObject(e.ObjectIds, e.Position, e.Rotation, e.Scale);
+                byte[] data = SerializeUpdateObject(e.Transforms);
                 SendPacket(data);
             }
             catch (Exception ex)
@@ -194,6 +212,19 @@ namespace WorldBuilderCoop.Events
             catch (Exception ex)
             {
                 ConsoleBase.WriteError("Error sending object removed: " + ex.Message);
+            }
+        }
+
+        private void HandleObjectDuplicated(object sender, ObjectDuplicatedEventArgs e)
+        {
+            try
+            {
+                byte[] data = SerializeDuplicateObject(e.SourceId, e.NewId, e.Position, e.Rotation, e.Scale);
+                SendPacket(data);
+            }
+            catch (Exception ex)
+            {
+                ConsoleBase.WriteError("Error sending object duplicated: " + ex.Message);
             }
         }
 
@@ -247,7 +278,7 @@ namespace WorldBuilderCoop.Events
         // SERIALIZATION METHODS
         // ═══════════════════════════════════════════
 
-        private byte[] SerializePlaceObject(Vector3 position, Quaternion rotation, Vector3 scale, int objectId, string prefabPath, int prefabIndex)
+        private byte[] SerializePlaceObject(Vector3 position, Quaternion rotation, Vector3 scale, long objectId, string prefabPath, int prefabIndex)
         {
             using (var ms = new MemoryStream())
             {
@@ -265,7 +296,7 @@ namespace WorldBuilderCoop.Events
                     writer.Write(scale.y);
                     writer.Write(scale.z);
                     writer.Write(objectId);
-                    
+
                     bool hasPath = !string.IsNullOrEmpty(prefabPath);
                     writer.Write(hasPath);
                     if (hasPath)
@@ -282,7 +313,7 @@ namespace WorldBuilderCoop.Events
             }
         }
 
-        private byte[] SerializeRemoveObject(List<int> objectIds)
+        private byte[] SerializeRemoveObject(List<long> objectIds)
         {
             using (var ms = new MemoryStream())
             {
@@ -301,7 +332,32 @@ namespace WorldBuilderCoop.Events
             }
         }
 
-        private byte[] SerializeUpdateObject(List<int> objectIds, Vector3 position, Quaternion rotation, Vector3 scale)
+        private byte[] SerializeDuplicateObject(long sourceId, long newId, Vector3 position, Quaternion rotation, Vector3 scale)
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write((byte)Packets.Duplicate);
+                    writer.Write(sourceId);
+                    writer.Write(newId);
+                    writer.Write(position.x);
+                    writer.Write(position.y);
+                    writer.Write(position.z);
+                    writer.Write(rotation.x);
+                    writer.Write(rotation.y);
+                    writer.Write(rotation.z);
+                    writer.Write(rotation.w);
+                    writer.Write(scale.x);
+                    writer.Write(scale.y);
+                    writer.Write(scale.z);
+
+                    return ms.ToArray();
+                }
+            }
+        }
+
+        private byte[] SerializeUpdateObject(List<NetTransform> transforms)
         {
             using (var ms = new MemoryStream())
             {
@@ -309,34 +365,24 @@ namespace WorldBuilderCoop.Events
                 {
                     writer.Write((byte)Packets.UpdateObjects);
 
-                    if (objectIds != null)
+                    int count = transforms != null ? transforms.Count : 0;
+                    writer.Write(count);
+
+                    for (int i = 0; i < count; i++)
                     {
-                        writer.Write(objectIds.Count);
-                        foreach (int id in objectIds)
-                        {
-                            writer.Write(id);
-                        }
+                        var t = transforms[i];
+                        writer.Write(t.objectId);
+                        writer.Write(t.position.x);
+                        writer.Write(t.position.y);
+                        writer.Write(t.position.z);
+                        writer.Write(t.rotation.x);
+                        writer.Write(t.rotation.y);
+                        writer.Write(t.rotation.z);
+                        writer.Write(t.rotation.w);
+                        writer.Write(t.scale.x);
+                        writer.Write(t.scale.y);
+                        writer.Write(t.scale.z);
                     }
-                    else
-                    {
-                        writer.Write(0);
-                    }
-
-                    writer.Write(position.x);
-                    writer.Write(position.y);
-                    writer.Write(position.z);
-
-                    writer.Write(rotation.x);
-                    writer.Write(rotation.y);
-                    writer.Write(rotation.z);
-                    writer.Write(rotation.w);
-
-                    writer.Write(scale.x);
-                    writer.Write(scale.y);
-                    writer.Write(scale.z);
-
-                    // No component data for now
-                    writer.Write(0);
 
                     return ms.ToArray();
                 }
@@ -364,7 +410,7 @@ namespace WorldBuilderCoop.Events
             }
         }
 
-        private byte[] SerializeAddToSelection(int userId, int objectId)
+        private byte[] SerializeAddToSelection(int userId, long objectId)
         {
             using (var ms = new MemoryStream())
             {
@@ -379,7 +425,7 @@ namespace WorldBuilderCoop.Events
             }
         }
 
-        private byte[] SerializeRemoveFromSelection(int userId, int objectId)
+        private byte[] SerializeRemoveFromSelection(int userId, long objectId)
         {
             using (var ms = new MemoryStream())
             {
@@ -403,6 +449,7 @@ namespace WorldBuilderCoop.Events
             _eventManager.OnObjectPlaced -= HandleObjectPlaced;
             _eventManager.OnObjectMoved -= HandleObjectMoved;
             _eventManager.OnObjectRemoved -= HandleObjectRemoved;
+            _eventManager.OnObjectDuplicated -= HandleObjectDuplicated;
             _eventManager.OnSelectionChanged -= HandleSelectionChanged;
             _eventManager.OnPlayerMoved -= HandlePlayerMoved;
         }
