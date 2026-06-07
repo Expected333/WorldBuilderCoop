@@ -297,7 +297,9 @@ namespace WorldBuilderCoop.Events
                     writer.Write(scale.z);
                     writer.Write(objectId);
 
-                    bool hasPath = !string.IsNullOrEmpty(prefabPath);
+                    // On privilégie l'index (hash du nom) : résolution fiable côté récepteur via
+                    // SceneManager.TryGetPrefab. Le chemin n'est utilisé qu'en repli (index absent).
+                    bool hasPath = prefabIndex == -1 && !string.IsNullOrEmpty(prefabPath);
                     writer.Write(hasPath);
                     if (hasPath)
                     {

@@ -80,6 +80,19 @@ namespace WorldBuilderCoop.Patches
         }
     }
 
+    // AppendHistory = snapshot JSON de TOUTE la scène (SceneManager.SerializeLevel). Pendant un
+    // chargement/replay de map en masse, il est déclenché par objet via InstantiateEditor → O(N²)
+    // (gel + OOM sur grosses maps, crash). On le court-circuite tant que MapManager.SuppressHistory
+    // est actif (uniquement pendant ces phases bulk ; l'édition interactive normale n'est pas touchée).
+    [HarmonyPatch(typeof(BlEditorManager), "AppendHistory")]
+    public class BlEditorManagerAppendHistory_Patch
+    {
+        public static bool Prefix()
+        {
+            return !MapManager.SuppressHistory; // false => saute l'original
+        }
+    }
+
     [HarmonyPatch(typeof(BlEditorManager), "StartHandleMove")]
     public class BlEditorManagerStartHandleMove_Patch
     {
@@ -218,22 +231,46 @@ namespace WorldBuilderCoop.Patches
     [HarmonyPatch(typeof(BlEditorManager), "DuplicateSelection")]
     public class BlEditorManagerDuplicateSelection_Patch
     {
-        public static void Postfix(BlEditorManager __instance)
+        // BP.DuplicateSelection remplace selectedTransforms par les copies fraîches. Ces copies sont
+        // instanciées DEPUIS LE PREFAB (SceneManager.Duplicate → Instantiate(prefab)), donc elles
+        // n'ont PAS de NetworkObject. On capture donc les NetworkId des sources en Prefix, puis on
+        // les apparie 1:1 (même ordre) aux copies en Postfix.
+        public static void Prefix(BlEditorManager __instance, out List<long> __state)
         {
-            if (WorldBuilderSync.IsRemoteAction || SteamNetworkManager.Instance == null || __instance.selectedTransforms.Count == 0)
-                return;
+            __state = null;
 
-            // Après DuplicateSelection, selectedTransforms = les nouvelles copies.
-            // Chaque copie hérite du NetworkId de sa source (composant copié) :
-            // on l'utilise comme sourceId, puis on alloue un ID neuf sans collision.
-            var entries = new List<DuplicateEntry>();
+            if (WorldBuilderSync.IsRemoteAction || SteamNetworkManager.Instance == null) return;
+            if (__instance.selectedTransforms == null || __instance.selectedTransforms.Count == 0) return;
 
+            __state = new List<long>(__instance.selectedTransforms.Count);
             foreach (var t in __instance.selectedTransforms)
             {
                 var netObj = t.GetComponent<NetworkObject>();
-                if (netObj == null) continue;
+                __state.Add(netObj != null ? netObj.NetworkId : -1L);
+            }
+        }
 
-                long sourceId = netObj.NetworkId;
+        public static void Postfix(BlEditorManager __instance, List<long> __state)
+        {
+            // __state null => action distante / non connecté / sélection vide : rien à répliquer.
+            if (__state == null || SteamNetworkManager.Instance == null || __instance.selectedTransforms.Count == 0)
+                return;
+
+            // Appariement par index : les copies sont produites dans le même ordre que les sources.
+            var entries = new List<DuplicateEntry>();
+            int count = Mathf.Min(__state.Count, __instance.selectedTransforms.Count);
+
+            for (int i = 0; i < count; i++)
+            {
+                long sourceId = __state[i];
+                if (sourceId == -1L) continue; // source non réseau : pas de réplication possible
+
+                Transform t = __instance.selectedTransforms[i];
+
+                // La copie est neuve : on lui attache un NetworkObject + un ID neuf sans collision.
+                var netObj = t.GetComponent<NetworkObject>();
+                if (netObj == null) netObj = t.gameObject.AddComponent<NetworkObject>();
+
                 long newId = NetworkIdAllocator.Allocate();
                 netObj.NetworkId = newId;
 

@@ -623,10 +623,21 @@ public class SteamNetworkManager : MonoBehaviour
             _isLoadingMap = false;
             WbLog.Info($"[SteamNetwork] Map load complete. Processing {_packetQueue.Count} queued packets.");
 
-            // Process all queued packets
-            while (_packetQueue.Count > 0)
+            // Replay en masse : on coupe les snapshots d'historique par paquet (chaque PlaceObject
+            // déclenche un AppendHistory = sérialisation de toute la scène → O(N²) sur grosses maps).
+            bool previousSuppress = MapManager.SuppressHistory;
+            MapManager.SuppressHistory = true;
+            try
             {
-                ApplyPacket(_packetQueue.Dequeue());
+                // Process all queued packets
+                while (_packetQueue.Count > 0)
+                {
+                    ApplyPacket(_packetQueue.Dequeue());
+                }
+            }
+            finally
+            {
+                MapManager.SuppressHistory = previousSuppress;
             }
         }
     }

@@ -33,22 +33,20 @@ namespace WorldBuilderCoop
                     return;
                 }
 
-                ResourceItem folderItem = null;
+                GameObject prefab = null;
 
-                if (!string.IsNullOrEmpty(prefabPath))
+                // 1) Résolution par index (= hash du nom de prefab) : MÊME mécanisme fiable que
+                //    la synchro de map (ProcessPendingLoadQueue). Indépendant du dossier courant.
+                if (sceneManager.TryGetPrefab(prefabIndex, out var byIndex))
                 {
-                    folderItem = ResourceDB.Instance.GetFolder(prefabPath);
-                }
-                else if (prefabIndex >= 0)
-                {
-                    // Attempt to get by index if path is missing
-                    if (ResourceDB.Instance.resources != null && prefabIndex < ResourceDB.Instance.resources.Count)
-                    {
-                        folderItem = ResourceDB.Instance.resources[prefabIndex];
-                    }
+                    prefab = byIndex;
                 }
 
-                var prefab = folderItem?.LoadRuntime;
+                // 2) Fallback chemin ResourceDB (compat anciens paquets / objets sans index).
+                if (prefab == null && !string.IsNullOrEmpty(prefabPath))
+                {
+                    prefab = ResourceDB.Instance.GetFolder(prefabPath)?.LoadRuntime;
+                }
 
                 if (prefab == null)
                 {
@@ -70,7 +68,7 @@ namespace WorldBuilderCoop
 
                 var networkObject = gameObject.AddComponent<NetworkObject>();
                 networkObject.NetworkId = objectId;
-                networkObject.PrefabPath = !string.IsNullOrEmpty(prefabPath) ? prefabPath : folderItem.path;
+                networkObject.PrefabPath = prefabPath;
                 networkObject.PrefabIndex = prefabIndex;
 
                 Core.networkObjectManager.RegisterNetworkObject(objectId, networkObject);

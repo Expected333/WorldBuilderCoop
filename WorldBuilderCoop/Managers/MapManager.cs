@@ -33,6 +33,12 @@ namespace WorldBuilderCoop.Managers
         // Taille de chunk : gros chunks => bien moins de paquets => transfert plus fiable/rapide.
         // Reste sous NetworkConfig.MaxPacketSize (1 Mo) et sous la limite Steam P2P fiable (1 Mo).
         private const int MapChunkSize = 512 * 1024;
+
+        // Quand true, BlEditorManager.AppendHistory est court-circuité (cf. patch dédié).
+        // L'historique = un snapshot JSON de TOUTE la scène ; le déclencher par objet pendant
+        // un chargement/replay de map donne un coût O(N²) (gel + OOM sur grosses maps).
+        public static bool SuppressHistory = false;
+
         private static bool _isLoading = false;
         public static bool IsLoading
         {
@@ -83,6 +89,9 @@ namespace WorldBuilderCoop.Managers
                 _receivedChunks.Clear();
                 _expectedChunks = totalChunks;
                 _mapComplete = false;
+                // Garde-fou : repart toujours d'un historique actif (au cas où un chargement
+                // précédent aurait été interrompu en laissant le flag à true).
+                SuppressHistory = false;
 
                 BlEditorManager.Instance.AppendHistory();
                 BlEditorManager.Instance.ClearSelection();
@@ -191,6 +200,11 @@ namespace WorldBuilderCoop.Managers
             WbLog.Debug($"[Client] Processing {totalCount} objects...");
             MapLoadingScreen.BeginProcessing(totalCount);
 
+            // Coupe les snapshots d'historique pendant l'instanciation en masse : InstantiateEditor
+            // appelle AppendHistory par objet → O(N²) (gel/OOM sur grosses maps). Un chargement de
+            // map n'est de toute façon pas une action annulable par objet.
+            SuppressHistory = true;
+
             while (_pendingLoadObjects.Count > 0)
             {
                 stopwatch.Restart();
@@ -244,6 +258,9 @@ namespace WorldBuilderCoop.Managers
                 MapLoadingScreen.ProcessingProgress(processed);
                 yield return null;
             }
+
+            // Instanciation terminée : on réactive l'historique normal.
+            SuppressHistory = false;
 
             // Post-process map for entities
             SceneManager.Instance.ProcessMap();

@@ -1,6 +1,6 @@
 ﻿{
   "name": "WorldBuilderCoop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Expected333",
   "description": "Adds cooperative multiplayer to Broke Protocol's World Builder. Host or join sessions via Steam or LAN.",
   "dll_asset_pattern": "WorldBuilderCoop.dll",

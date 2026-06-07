@@ -64,12 +64,9 @@ namespace WorldBuilderCoop.Network
                             prefabIndex = reader.ReadInt32();
                         }
 
-                        if (BlEditorManager.Instance != null)
-                        {
-                            BlEditorManager.Instance.AppendHistory();
-                        }
-
-                        // We need to update WorldBuilderSync.placeObject to handle prefabIndex
+                        // Pas d'AppendHistory ici : placeObject → InstantiateEditor en déclenche déjà
+                        // un. Le doublon faisait diverger l'historique du récepteur (2 snapshots) vs
+                        // l'émetteur (1) et doublait le coût O(N) par placement reçu.
                         WorldBuilderSync.placeObject(new Vector3(x, y, z), new Quaternion(rx, ry, rz, rw), new Vector3(sx, sy, sz), objectId, prefabPath, prefabIndex);
                     }
                 }

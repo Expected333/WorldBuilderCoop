@@ -52,14 +52,19 @@ namespace WorldBuilderCoop.Patches
                 string prefabName = __instance.name;
                 string currentPath = MonoBehaviourSingleton<BlEditorManager>.Instance.currentPrefabPath;
                 string fullPath = Path.Combine(currentPath, prefabName);
+                // Index = hash du nom de prefab (Animator.StringToHash) : c'est la clé fiable utilisée
+                // par SceneManager.TryGetPrefab et par la synchro de map. Indépendant du dossier courant,
+                // donc résoluble même quand l'objet est placé depuis une recherche (currentPrefabPath vide).
+                int prefabIndex = asset.GetPrefabIndex();
                 networkObject.PrefabPath = fullPath;
+                networkObject.PrefabIndex = prefabIndex;
 
                 // Enregistrer localement pour que les éditions ultérieures (move/delete) soient adressables.
                 Core.networkObjectManager.RegisterNetworkObject(networkObject.NetworkId, networkObject);
 
                 MonoBehaviourSingleton<BlEditorManager>.Instance.SetSelection(gameObject.transform);
 
-                WorldBuilderEventManager.Instance.RaiseObjectPlaced(networkObject.NetworkId, fullPath, position, Quaternion.identity, Vector3.one);
+                WorldBuilderEventManager.Instance.RaiseObjectPlaced(networkObject.NetworkId, fullPath, position, Quaternion.identity, Vector3.one, prefabIndex);
             }
 
             return false;
